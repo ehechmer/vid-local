@@ -2,52 +2,44 @@ import streamlit as st
 import os
 import sys
 
-# --- 1. CLOUD SECURITY FIX (MUST BE AT THE VERY TOP) ---
-# This block unlocks the "ImageMagick Policy" to allow text generation
-def unlock_imagemagick():
-    # Location of the restrictive system policy
-    system_policy = "/etc/ImageMagick-6/policy.xml"
-    
-    # Only run this if we are on the cloud (Linux)
-    if os.path.exists(system_policy):
-        try:
-            with open(system_policy, "r") as f:
-                policy_data = f.read()
-            
-            # This is the "Key" -> We find the blocking rule and rewrite it to "read|write"
-            # The rule usually looks like: <policy domain="path" rights="none" pattern="@*" />
-            if 'rights="none" pattern="@*"' in policy_data:
-                policy_data = policy_data.replace('rights="none" pattern="@*"', 'rights="read|write" pattern="@*"')
-            
-            # Write our "Unlocked" policy to the current folder
-            with open("policy.xml", "w") as f:
-                f.write(policy_data)
-            
-            # Tell the system to use OUR policy file, not the system one
-            os.environ["MAGICK_CONFIGURE_PATH"] = os.getcwd()
-            print("✅ ImageMagick Policy Unlocked Successfully")
-            
-        except Exception as e:
-            print(f"⚠️ Could not apply ImageMagick fix: {e}")
+# --- 1. CLOUD SECURITY BYPASS (THE BRUTE FORCE FIX) ---
+# We write a fresh policy file that explicitly allows text operations
+# This bypasses the system's "rights='none'" blocking rule.
 
-unlock_imagemagick()
+policy_content = """
+<policymap>
+  <policy domain="resource" name="memory" value="1GiB"/>
+  <policy domain="resource" name="map" value="1GiB"/>
+  <policy domain="resource" name="width" value="16KP"/>
+  <policy domain="resource" name="height" value="16KP"/>
+  <policy domain="resource" name="area" value="1GB"/>
+  <policy domain="resource" name="disk" value="1GiB"/>
+  <policy domain="delegate" rights="none" pattern="URL" />
+  <policy domain="delegate" rights="none" pattern="HTTPS" />
+  <policy domain="delegate" rights="none" pattern="HTTP" />
+  <policy domain="path" rights="read|write" pattern="@*" />
+</policymap>
+"""
+
+# Write this file to the main directory
+with open("policy.xml", "w") as f:
+    f.write(policy_content)
+
+# Tell ImageMagick to look HERE for the policy file, not in /etc/
+os.environ["MAGICK_CONFIGURE_PATH"] = os.getcwd()
+
 # -------------------------------------------------------
 
 import pandas as pd
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
-from moviepy.config import change_settings
 import tempfile
 import zipfile
-
-# Explicitly tell MoviePy where to find the convert binary (Standard Linux Path)
-if os.path.exists("/usr/bin/convert"):
-    change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
 
 # --- 2. BRANDING CONFIGURATION ---
 APP_NAME = "vid_local"
 COMPANY_NAME = "LOCH & KEY PRODUCTIONS"
-PRIMARY_COLOR = "#C5A059"  # Loch & Key Gold
-BACKGROUND_COLOR = "#0e0e0e" # Dark Cinema Background
+PRIMARY_COLOR = "#C5A059"  # Cinema Gold
+BACKGROUND_COLOR = "#0e0e0e"
 TEXT_COLOR = "#ffffff"
 
 # --- 3. PAGE SETUP ---
@@ -73,7 +65,8 @@ def process_video_batch(df, video_path, font_path, temp_dir):
     
     clip = VideoFileClip(video_path)
     # Use uploaded font or fallback to a standard system font
-    font_to_use = font_path if font_path else 'Deja-Vu-Sans-Bold'
+    # Note: 'DejaVu-Sans-Bold' is standard on Linux if no custom font is provided
+    font_to_use = font_path if font_path else 'DejaVu-Sans-Bold'
     
     for i, row in df.iterrows():
         city_name = str(row['City']).upper()
