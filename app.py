@@ -33,43 +33,45 @@ st.markdown(f"""
 # --- 4. TEXT ENGINE (PILLOW REPLACEMENT) ---
 def create_pil_text_clip(text, font_path, font_size, color, stroke_width=2, stroke_color='black'):
     """
-    Generates a transparent text image using PIL (Pillow) instead of ImageMagick.
-    This bypasses all Linux security policy errors.
+    Generates a transparent text image using PIL (Pillow).
+    Includes safety casts to int() to prevent 'float object' errors.
     """
     # 1. Load Font
     try:
         if font_path:
-            font = ImageFont.truetype(font_path, font_size)
+            font = ImageFont.truetype(font_path, int(font_size))
         else:
-            # Fallback for Linux servers if no font provided
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+            # Fallback for Linux servers
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", int(font_size))
     except Exception:
         # Ultimate fallback
         font = ImageFont.load_default()
 
-    # 2. Calculate Text Size using getbbox
+    # 2. Calculate Text Size
     dummy_img = Image.new('RGBA', (1, 1))
     draw = ImageDraw.Draw(dummy_img)
     
-    # Get bounding box [left, top, right, bottom]
+    # Get bounding box. Result might be floats, so we assume inputs are ints but outputs need checking.
     bbox = draw.textbbox((0, 0), text, font=font, align='center', stroke_width=stroke_width)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
     
-    # Add some padding so strokes don't get cut off
-    width = text_width + 40
-    height = text_height + 40
+    # Calculate width/height and FORCE INTEGER (The fix for your error)
+    text_width = int(bbox[2] - bbox[0])
+    text_height = int(bbox[3] - bbox[1])
+    
+    # Add padding
+    width = int(text_width + 40)
+    height = int(text_height + 40)
 
-    # 3. Create Image
+    # 3. Create Image (Image.new strictly requires Integers)
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # 4. Draw Text (Centered)
-    # Note: simple centering logic
-    x = 20
-    y = 20
+    # 4. Draw Text
+    # We offset by -bbox[0] to align the text properly inside the box
+    x_pos = int(20 - bbox[0])
+    y_pos = int(20 - bbox[1])
     
-    draw.text((x, y), text, font=font, fill=color, align='center', 
+    draw.text((x_pos, y_pos), text, font=font, fill=color, align='center', 
               stroke_width=stroke_width, stroke_fill=stroke_color)
 
     # 5. Convert to MoviePy ImageClip
