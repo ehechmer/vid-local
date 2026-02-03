@@ -1,4 +1,7 @@
 streamlit
 pandas
-moviepy
-numpy
+moviepy==1.0.3
+numpy<2
+decorator>=4.4.2
+imageio>=2.5.0
+proglog
