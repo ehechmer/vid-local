@@ -1,71 +1,85 @@
 import streamlit as st
 import os
-import shutil
+import sys
 
-# --- IMAGEMAGICK CLOUD FIX (MUST RUN BEFORE MOVIEPY) ---
-# This overrides the server's strict security policy to allow text generation
-def fix_imagemagick_policy():
-    # Define the path to the system policy
-    system_policy_path = "/etc/ImageMagick-6/policy.xml"
-    local_policy_path = os.path.join(os.getcwd(), "policy.xml")
+# --- 1. CLOUD SECURITY FIX (MUST BE AT THE VERY TOP) ---
+# This block unlocks the "ImageMagick Policy" to allow text generation
+def unlock_imagemagick():
+    # Location of the restrictive system policy
+    system_policy = "/etc/ImageMagick-6/policy.xml"
     
-    # Only run this if we are on the cloud (Linux) and haven't fixed it yet
-    if os.path.exists(system_policy_path) and not os.path.exists(local_policy_path):
-        with open(system_policy_path, "r") as f:
-            policy_content = f.read()
-        
-        # Replace the blocking rule (rights="none" -> rights="read|write")
-        fixed_content = policy_content.replace('rights="none" pattern="@*"', 'rights="read|write" pattern="@*"')
-        
-        # Save the fixed version locally
-        with open(local_policy_path, "w") as f:
-            f.write(fixed_content)
-    
-    # If we created a local policy, tell ImageMagick to use it
-    if os.path.exists(local_policy_path):
-        os.environ["MAGICK_CONFIGURE_PATH"] = os.getcwd()
+    # Only run this if we are on the cloud (Linux)
+    if os.path.exists(system_policy):
+        try:
+            with open(system_policy, "r") as f:
+                policy_data = f.read()
+            
+            # This is the "Key" -> We find the blocking rule and rewrite it to "read|write"
+            # The rule usually looks like: <policy domain="path" rights="none" pattern="@*" />
+            if 'rights="none" pattern="@*"' in policy_data:
+                policy_data = policy_data.replace('rights="none" pattern="@*"', 'rights="read|write" pattern="@*"')
+            
+            # Write our "Unlocked" policy to the current folder
+            with open("policy.xml", "w") as f:
+                f.write(policy_data)
+            
+            # Tell the system to use OUR policy file, not the system one
+            os.environ["MAGICK_CONFIGURE_PATH"] = os.getcwd()
+            print("✅ ImageMagick Policy Unlocked Successfully")
+            
+        except Exception as e:
+            print(f"⚠️ Could not apply ImageMagick fix: {e}")
 
-fix_imagemagick_policy()
+unlock_imagemagick()
 # -------------------------------------------------------
 
 import pandas as pd
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
+from moviepy.config import change_settings
 import tempfile
 import zipfile
 
-# --- 1. BRANDING CONFIGURATION ---
+# Explicitly tell MoviePy where to find the convert binary (Standard Linux Path)
+if os.path.exists("/usr/bin/convert"):
+    change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
+
+# --- 2. BRANDING CONFIGURATION ---
 APP_NAME = "vid_local"
 COMPANY_NAME = "LOCH & KEY PRODUCTIONS"
-PRIMARY_COLOR = "#C5A059"  # Cinema Gold
-BACKGROUND_COLOR = "#0e0e0e"
+PRIMARY_COLOR = "#C5A059"  # Loch & Key Gold
+BACKGROUND_COLOR = "#0e0e0e" # Dark Cinema Background
 TEXT_COLOR = "#ffffff"
 
-# --- 2. PAGE SETUP ---
+# --- 3. PAGE SETUP ---
 st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="centered")
 
-# --- 3. CUSTOM CSS ---
+# --- 4. CUSTOM CSS ---
 st.markdown(f"""
     <style>
     .stApp {{ background-color: {BACKGROUND_COLOR}; color: {TEXT_COLOR}; font-family: 'Helvetica Neue', sans-serif; }}
-    h1 {{ color: {TEXT_COLOR}; text-transform: uppercase; letter-spacing: 4px; text-align: center; }}
-    h3 {{ color: {PRIMARY_COLOR}; font-weight: 600; text-transform: uppercase; text-align: center; margin-top: -20px; }}
-    .stButton>button {{ background-color: transparent; color: {PRIMARY_COLOR}; border: 2px solid {PRIMARY_COLOR}; padding: 15px; width: 100%; font-weight: bold; transition: 0.3s; }}
+    h1 {{ color: {TEXT_COLOR}; text-transform: uppercase; letter-spacing: 4px; text-align: center; font-size: 40px; }}
+    h3 {{ color: {PRIMARY_COLOR}; font-weight: 600; text-transform: uppercase; text-align: center; margin-top: -20px; letter-spacing: 2px; }}
+    .stButton>button {{ background-color: transparent; color: {PRIMARY_COLOR}; border: 2px solid {PRIMARY_COLOR}; padding: 15px; width: 100%; font-weight: bold; text-transform: uppercase; transition: 0.3s; }}
     .stButton>button:hover {{ background-color: {PRIMARY_COLOR}; color: {BACKGROUND_COLOR}; }}
+    .stFileUploader label {{ color: {PRIMARY_COLOR}; font-weight: bold; }}
     </style>
 """, unsafe_allow_html=True)
 
-# --- 4. VIDEO ENGINE ---
+# --- 5. VIDEO ENGINE ---
 def process_video_batch(df, video_path, font_path, temp_dir):
     generated_paths = []
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     clip = VideoFileClip(video_path)
-    font_to_use = font_path if font_path else 'Arial'
+    # Use uploaded font or fallback to a standard system font
+    font_to_use = font_path if font_path else 'Deja-Vu-Sans-Bold'
     
     for i, row in df.iterrows():
         city_name = str(row['City']).upper()
         status_text.markdown(f"**PROCESSING:** {city_name}")
+        
+        # --- TEXT LAYERS ---
         
         # 1. BAND NAME
         txt1 = TextClip("LAWRENCE\nWITH JACOB JEFFRIES", font=font_to_use, fontsize=80, color='white', stroke_color='black', stroke_width=2)
@@ -81,11 +95,13 @@ def process_video_batch(df, video_path, font_path, temp_dir):
         txt3 = TextClip(content3.upper(), font=font_to_use, fontsize=70, color='white', stroke_color='black', stroke_width=2)
         txt3 = txt3.set_position(('center', 'center')).set_start(17).set_duration(clip.duration - 17)
         
+        # COMPOSITE
         final = CompositeVideoClip([clip, txt1, txt2, txt3])
         
         output_filename = f"Promo_{city_name.replace(' ', '')}.mp4"
         output_path = os.path.join(temp_dir, output_filename)
         
+        # RENDER (Ultrafast for cloud performance)
         final.write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
         
         generated_paths.append(output_path)
@@ -94,7 +110,7 @@ def process_video_batch(df, video_path, font_path, temp_dir):
     clip.close()
     return generated_paths
 
-# --- 5. FRONT END ---
+# --- 6. FRONT END ---
 st.title("VID_LOCAL")
 st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
