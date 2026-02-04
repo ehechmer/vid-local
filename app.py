@@ -51,11 +51,20 @@ st.markdown(f"""
     .stApp {{ transition: all 0.3s ease; }}
     h1, h3 {{ text-align: center; text-transform: uppercase; }}
     .stButton>button {{ border: 2px solid {PRIMARY_COLOR}; color: {PRIMARY_COLOR}; font-weight: bold; width: 100%; }}
-    /* Compact preview adjustments */
+    
+    /* STRICT IMAGE CONSTRAINTS */
+    /* This ensures the image never pushes the layout too wide or too tall */
+    div[data-testid="stImage"] {{
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+    }}
     div[data-testid="stImage"] img {{
-        max-width: 100%;
-        height: auto; 
-        border: 1px solid #333;
+        max-width: 300px !important; /* Fixed width for phone simulation */
+        max-height: 80vh !important; /* Never taller than 80% of screen */
+        object-fit: contain;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     }}
 </style>
 """, unsafe_allow_html=True)
@@ -83,7 +92,6 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("3. Positioning (Offsets)")
-    # New Positioning Controls
     pos_x = st.slider("↔️ Horizontal Offset", -500, 500, 0, step=10, help="Negative = Left, Positive = Right")
     pos_y = st.slider("↕️ Vertical Offset", -500, 500, 0, step=10, help="Negative = Up, Positive = Down")
 
@@ -149,7 +157,6 @@ def create_split_convergence(text, font_path, font_size, video_w, video_h, durat
     
     total_h = sum(line_heights)
     
-    # Apply Y Offset here
     start_y_cursor = ((video_h / 2) - (total_h / 2)) + offset_y
     
     for i, line in enumerate(lines):
@@ -199,9 +206,6 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
         t2_dur, t3_start = dur * 0.55, dur * 0.80
         t3_dur = dur * 0.20
 
-        # Note: We apply the sidebar pos_x/pos_y to ALL texts for consistency, 
-        # or you could map specific offsets if you wanted distinct ones.
-        
         # Intro
         txt1_img = draw_text_on_image(Image.new("RGBA", (w,h)), "LAWRENCE\nWITH JACOB JEFFRIES", font_path, v_size_main, TEXT_RGB, STROKE_RGB, v_stroke_width, v_shadow_offset, pos_x, pos_y)
         txt1 = ImageClip(np.array(txt1_img)).set_duration(t1_dur).set_position('center').crossfadeout(0.2)
@@ -236,7 +240,7 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
 st.title(APP_NAME)
 st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
-col_files, col_preview = st.columns([2, 3]) # Ratio: Files take 2/5, Preview takes 3/5
+col_files, col_preview = st.columns([1, 1]) # Balanced Columns
 
 with col_files:
     uploaded_zip = st.file_uploader("1. Video Zip", type=["zip"])
@@ -292,7 +296,7 @@ if uploaded_zip and uploaded_csv:
             st.subheader("👁️ LIVE EDITOR")
             
             # Preview Layer Control
-            preview_layer = st.radio("Preview Text Layer:", ["Intro (Lawrence)", "Middle (City/Venue)", "Outro (Tickets)"], horizontal=True, index=1)
+            preview_layer = st.radio("Layer:", ["Intro (Lawrence)", "Middle (City/Venue)", "Outro (Tickets)"], horizontal=True, index=1)
             
             # Scrub Control
             scrub_time = st.slider("Scrub Video Frame (Sec)", 0.0, 5.0, 0.5, step=0.1)
@@ -300,10 +304,9 @@ if uploaded_zip and uploaded_csv:
             # 1. Cache/Refresh the background frame based on Slider
             frame_cache_key = f"{video_file}_{scrub_time}"
             if st.session_state.get('last_frame_key') != frame_cache_key and os.path.exists(video_path):
-                with st.spinner(f"Loading frame at {scrub_time}s..."):
+                with st.spinner(f"Loading frame..."):
                     try:
                         clip = VideoFileClip(video_path)
-                        # Safety check for short videos
                         actual_t = min(scrub_time, clip.duration - 0.1) if clip.duration else scrub_time
                         st.session_state.preview_img_cache = Image.fromarray(clip.get_frame(actual_t))
                         st.session_state.last_frame_key = frame_cache_key
@@ -338,8 +341,8 @@ if uploaded_zip and uploaded_csv:
                     pos_y
                 )
                 
-                # Scale down for display (50% width)
-                st.image(final_preview, caption=f"Previewing: {preview_layer}", width=450) # Fixed width prevents giant image
+                # Fixed Width 300px prevents massive vertical scaling
+                st.image(final_preview, caption=f"Previewing: {preview_layer}", width=300)
             else:
                 st.info("Upload files to start.")
 
