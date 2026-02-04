@@ -52,16 +52,14 @@ st.markdown(f"""
     h1, h3 {{ text-align: center; text-transform: uppercase; }}
     .stButton>button {{ border: 2px solid {PRIMARY_COLOR}; color: {PRIMARY_COLOR}; font-weight: bold; width: 100%; }}
     
-    /* STRICT IMAGE CONSTRAINTS */
-    /* This ensures the image never pushes the layout too wide or too tall */
     div[data-testid="stImage"] {{
         display: flex;
         justify-content: center;
         align-items: flex-start;
     }}
     div[data-testid="stImage"] img {{
-        max-width: 300px !important; /* Fixed width for phone simulation */
-        max-height: 80vh !important; /* Never taller than 80% of screen */
+        max-width: 300px !important;
+        max-height: 80vh !important;
         object-fit: contain;
         border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -117,7 +115,6 @@ def get_scaled_font(text, font_path, max_size, target_width):
     return font, size
 
 def draw_text_on_image(base_img, text, font_path, font_size, color, stroke, stroke_w, shadow_off, offset_x=0, offset_y=0):
-    """Composites text directly onto a PIL image with manual positioning offsets"""
     img = base_img.copy().convert("RGBA")
     draw = ImageDraw.Draw(img)
     W, H = img.size
@@ -125,20 +122,16 @@ def draw_text_on_image(base_img, text, font_path, font_size, color, stroke, stro
     target_w = W * 0.85
     font, final_size = get_scaled_font(text, font_path, font_size, target_w)
     
-    # Calculate text block size
     bbox = draw.textbbox((0, 0), text, font=font, align='center', stroke_width=stroke_w, spacing=-12)
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
     
-    # Center position + User Offsets
     x = ((W - text_w) / 2 - bbox[0]) + offset_x
     y = ((H - text_h) / 2 - bbox[1]) + offset_y
     
-    # Draw Shadow
     if shadow_off > 0:
         draw.text((x + shadow_off, y + shadow_off), text, font=font, fill=stroke, align='center', spacing=-12)
     
-    # Draw Main Text
     draw.text((x, y), text, font=font, fill=color, align='center', stroke_width=stroke_w, stroke_fill=stroke, spacing=-12)
     return img
 
@@ -176,7 +169,6 @@ def create_split_convergence(text, font_path, font_size, video_w, video_h, durat
         final_y = start_y_cursor
         start_y_cursor += line_heights[i]
         
-        # Apply X Offset to final destination
         final_x = ((video_w / 2) - (w / 2)) + offset_x
         start_x = -w if i % 2 == 0 else video_w
         
@@ -191,10 +183,12 @@ def create_split_convergence(text, font_path, font_size, video_w, video_h, durat
         clips.append(line_clip.set_position(pos_func))
     return CompositeVideoClip(clips, size=(video_w, video_h)).set_duration(duration).set_start(start_time)
 
-# --- 6. RENDER FUNCTION ---
+# --- 6. RENDER FUNCTION (FIXED) ---
 def render_video(row, videos_dir, font_path, output_path, col_map):
     filename = str(row.get(col_map['filename'])).strip()
     video_full_path = os.path.join(videos_dir, filename)
+    
+    clip = None # <--- FIX: Initialize clip before try block
     
     try:
         clip = VideoFileClip(video_full_path)
@@ -240,7 +234,7 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
 st.title(APP_NAME)
 st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
-col_files, col_preview = st.columns([1, 1]) # Balanced Columns
+col_files, col_preview = st.columns([1, 1])
 
 with col_files:
     uploaded_zip = st.file_uploader("1. Video Zip", type=["zip"])
@@ -295,13 +289,10 @@ if uploaded_zip and uploaded_csv:
         with col_preview:
             st.subheader("👁️ LIVE EDITOR")
             
-            # Preview Layer Control
             preview_layer = st.radio("Layer:", ["Intro (Lawrence)", "Middle (City/Venue)", "Outro (Tickets)"], horizontal=True, index=1)
-            
-            # Scrub Control
             scrub_time = st.slider("Scrub Video Frame (Sec)", 0.0, 5.0, 0.5, step=0.1)
 
-            # 1. Cache/Refresh the background frame based on Slider
+            # 1. Cache/Refresh the background frame
             frame_cache_key = f"{video_file}_{scrub_time}"
             if st.session_state.get('last_frame_key') != frame_cache_key and os.path.exists(video_path):
                 with st.spinner(f"Loading frame..."):
@@ -316,7 +307,6 @@ if uploaded_zip and uploaded_csv:
 
             # 2. Real-time composite
             if st.session_state.preview_img_cache:
-                # Determine Text Content & Size based on selection
                 if "Intro" in preview_layer:
                     p_text = "LAWRENCE\nWITH JACOB JEFFRIES"
                     p_size = v_size_main
@@ -327,7 +317,6 @@ if uploaded_zip and uploaded_csv:
                     p_text = f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper()
                     p_size = v_size_small
                 
-                # Draw with OFFSETS
                 final_preview = draw_text_on_image(
                     st.session_state.preview_img_cache, 
                     p_text, 
@@ -341,7 +330,6 @@ if uploaded_zip and uploaded_csv:
                     pos_y
                 )
                 
-                # Fixed Width 300px prevents massive vertical scaling
                 st.image(final_preview, caption=f"Previewing: {preview_layer}", width=300)
             else:
                 st.info("Upload files to start.")
