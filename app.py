@@ -17,7 +17,6 @@ PRIMARY_COLOR = "#4FBDDB"
 
 with st.sidebar:
     st.header("🎨 UI & MOTION TUNING")
-    # DEFAULT SET TO LIGHT MODE
     ui_mode = st.radio("UI Theme:", ["Light Mode", "Dark Mode"], index=0)
     
     st.markdown("---")
@@ -38,14 +37,22 @@ with st.sidebar:
     if st.button("♻️ RESET EVERYTHING"):
         st.rerun()
 
+#---2. UTILITY FUNCTIONS
 def hex_to_rgb(h):
     h = h.lstrip('#')
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
+def get_col(df, options):
+    """Helper to find column names regardless of capitalization/spacing"""
+    for opt in options:
+        if opt in df.columns:
+            return opt
+    return None
+
 TEXT_RGB = hex_to_rgb(v_text_color)
 STROKE_RGB = hex_to_rgb(v_stroke_color)
 
-# Swapped Default Logic
+# Theme Logic
 if ui_mode == "Light Mode":
     BG_COLOR = "#F0F2F6"
     UI_LABEL_COLOR = "#000000"
@@ -57,32 +64,27 @@ else:
 
 st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="centered")
 
-#---2. IMPROVED CSS FOR THEME SWITCHING
+# CSS Styling
 st.markdown(f"""
 <style>
     .stApp {{ background-color: {BG_COLOR}; color: {UI_LABEL_COLOR}; transition: all 0.3s ease; }}
-    
-    /* Force high-contrast labels for the current theme */
     label, .stMarkdown p, .stFileUploader label p, div[data-testid="stWidgetLabel"] p {{ 
         color: {UI_LABEL_COLOR} !important; 
         font-weight: 800 !important; 
         font-size: 1.1rem !important;
     }}
-    
     .stFileUploader section {{ 
         border: 2px dashed {PRIMARY_COLOR} !important; 
         background-color: {BOX_BG} !important; 
         border-radius: 10px;
     }}
-    
     h1, h3 {{ color: {UI_LABEL_COLOR} !important; text-align: center; text-transform: uppercase; }}
     h4 {{ color: {PRIMARY_COLOR} !important; border-bottom: 2px solid {PRIMARY_COLOR}; }}
-    
     .stButton>button {{ border: 2px solid {PRIMARY_COLOR}; color: {PRIMARY_COLOR}; font-weight: bold; width: 100%; }}
 </style>
 """, unsafe_allow_html=True)
 
-#---3. HELPER: DYNAMIC FONT SCALER
+#---3. DYNAMIC FONT SCALER & RENDERING
 def get_scaled_font(text, font_path, max_size, target_width):
     size = max_size
     try:
@@ -99,7 +101,6 @@ def get_scaled_font(text, font_path, max_size, target_width):
             return test_font, s
     return font, size
 
-#---4. TYPOGRAPHY & RENDERING ENGINE
 def create_pil_text_clip(text, font_path, font_size, video_w, color=TEXT_RGB, stroke_width=v_stroke_width, stroke_color=STROKE_RGB):
     target_w = video_w * 0.85 
     font, final_size = get_scaled_font(text, font_path, font_size, target_w)
@@ -138,11 +139,6 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
 
     try:
         with VideoFileClip(video_full_path) as clip:
-            # Metadata Handshake
-            if not hasattr(clip, 'duration') or clip.duration is None or clip.duration == 0:
-                time.sleep(0.5)
-                clip = VideoFileClip(video_full_path)
-            
             w, h = clip.size
             dur = clip.duration
             
@@ -152,11 +148,12 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
             txt2 = apply_motion(create_pil_text_clip(content2, font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.25).set_start(dur*0.25).set_duration(dur*0.55)
             txt3 = apply_motion(create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.80).set_start(dur*0.80).set_duration(dur*0.20)
             
-            CompositeVideoClip([clip, txt1, txt2, txt3]).write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
+            final_vid = CompositeVideoClip([clip, txt1, txt2, txt3])
+            final_vid.write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
         return True, "Success"
     except Exception as e: return False, str(e)
 
-#---5. UI LAYOUT
+#---4. UI LAYOUT & PROCESSING
 st.title(APP_NAME)
 st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
@@ -169,10 +166,14 @@ with c2:
 
 if uploaded_zip and uploaded_csv:
     df = pd.read_csv(uploaded_csv)
-    col_map = {'filename': get_col(df, ['Filename', 'File Name', 'Video']), 'city': get_col(df, ['City', 'Location'])}
+    # Using the now-defined get_col function
+    col_map = {
+        'filename': get_col(df, ['Filename', 'File Name', 'Video']), 
+        'city': get_col(df, ['City', 'Location'])
+    }
     
     if not col_map['filename']:
-        st.error("🚨 Check CSV headers!")
+        st.error("🚨 Check CSV headers! Could not find a 'Filename' or 'Video' column.")
     else:
         st.markdown("---")
         st.subheader("🔍 PREVIEW ENGINE")
@@ -183,7 +184,7 @@ if uploaded_zip and uploaded_csv:
             if st.button("⚡ FAST TEXT PREVIEW"):
                 row = df.iloc[preview_row]
                 city_name = str(row.get(col_map['city'], 'Unknown')).upper()
-                f_p = None
+                f_p = None # Temporary font path logic
                 t1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", f_p, v_size_main, 1080)
                 t2 = create_pil_text_clip(f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper(), f_p, v_size_small, 1080)
                 t3 = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), f_p, v_size_small, 1080)
@@ -221,6 +222,7 @@ if uploaded_zip and uploaded_csv:
                 f_p = os.path.join(base_dir, "f.ttf") if uploaded_font else None
                 if f_p: 
                     with open(f_p, "wb") as f: f.write(uploaded_font.read())
+                
                 processed, log_data, status_container = [], [], st.empty()
                 prog = st.progress(0)
                 for i, row in df.iterrows():
@@ -231,6 +233,7 @@ if uploaded_zip and uploaded_csv:
                     status_container.table(log_data)
                     if success: processed.append(out_path)
                     prog.progress((i + 1) / len(df))
+                
                 if processed:
                     z_path = os.path.join(base_dir, "Results.zip")
                     with zipfile.ZipFile(z_path, 'w') as z:
