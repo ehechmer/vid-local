@@ -135,7 +135,7 @@ def process_batch(df, videos_dir, font_path, output_dir):
     return generated_paths
 
 # --- 6. FRONT END ---
-st.title("VID_LOCAL PRO")
+st.title("L&K Localizer")
 st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
 with st.container():
@@ -143,6 +143,7 @@ with st.container():
     with col1:
         st.markdown("#### 1. ASSETS")
         uploaded_zip = st.file_uploader("Upload ZIP of Raw Videos", type=["zip"])
+        st.markdown("#### 3. Font")
         uploaded_font = st.file_uploader("Upload Font (.ttf) [Optional]", type=["ttf"])
     with col2:
         st.markdown("#### 2. DATA")
@@ -194,4 +195,5 @@ if uploaded_zip and uploaded_csv:
         finally:
             # Cleanup temp files to keep server healthy
             shutil.rmtree(base_dir)
+
 
