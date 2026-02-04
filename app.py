@@ -6,6 +6,7 @@ import os
 import zipfile
 import shutil
 import random
+import time
 from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
 from PIL import Image, ImageFont, ImageDraw
 
@@ -42,7 +43,7 @@ def hex_to_rgb(h):
 TEXT_RGB = hex_to_rgb(v_text_color)
 STROKE_RGB = hex_to_rgb(v_stroke_color)
 
-# Forced High-Contrast UI Colors
+# Forced High-Contrast UI Colors for Dark Mode visibility
 BG_COLOR = "#0A1A1E" if ui_mode == "Dark Mode" else "#F0F2F6"
 UI_LABEL_COLOR = "#FFFFFF" if ui_mode == "Dark Mode" else "#000000"
 
@@ -53,7 +54,7 @@ st.markdown(f"""
 <style>
     .stApp {{ background-color: {BG_COLOR}; color: {UI_LABEL_COLOR}; }}
     
-    /* Force all labels (Upload Video Zip, Select City, etc) to be Pure White/Black and Bold */
+    /* Force ALL labels to be Pure White in Dark Mode */
     label, .stMarkdown p, .stFileUploader label p {{ 
         color: {UI_LABEL_COLOR} !important; 
         font-weight: 800 !important; 
@@ -61,7 +62,6 @@ st.markdown(f"""
         opacity: 1 !important;
     }}
     
-    /* Box Styling */
     .stFileUploader section {{ 
         border: 2px dashed {PRIMARY_COLOR} !important; 
         background-color: rgba(255, 255, 255, 0.05) !important; 
@@ -90,16 +90,12 @@ def create_pil_text_clip(text, font_path, font_size, color=TEXT_RGB, stroke_widt
     
     dummy_img = Image.new('RGBA', (1, 1))
     draw = ImageDraw.Draw(dummy_img)
-    
-    # Tight leading (spacing) to match high-impact reference
     bbox = draw.textbbox((0, 0), text, font=font, align='center', stroke_width=stroke_width, spacing=-10)
     w, h = int((bbox[2]-bbox[0])+80), int((bbox[3]-bbox[1])+80)
     img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     pos = (int(40-bbox[0]), int(40-bbox[1]))
-    
-    draw.text(pos, text, font=font, fill=color, align='center', 
-              stroke_width=stroke_width, stroke_fill=stroke_color, spacing=-10)
+    draw.text(pos, text, font=font, fill=color, align='center', stroke_width=stroke_width, stroke_fill=stroke_color, spacing=-10)
     return ImageClip(np.array(img))
 
 def apply_motion(clip, style, w, h, duration, start_time):
@@ -123,30 +119,26 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
         return False, f"File '{filename}' not found"
 
     try:
-        # Robust duration check to prevent 'Attribute Error'
+        # Stabilized duration loading
         clip = VideoFileClip(video_full_path)
-        if not hasattr(clip, 'duration') or clip.duration is None:
-            return False, "File format error: duration missing"
+        if clip.duration is None or clip.duration == 0:
+            time.sleep(0.5) # Brief wait for OS file lock
+            clip = VideoFileClip(video_full_path)
             
         w, h = clip.size
         dur = clip.duration
         scale = 1.0 if (w / h) < 0.7 else 0.75
         
-        # Layer 1: Band Name
         txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, int(v_size_main*scale))
         txt1 = txt1.set_position('center').set_start(0).set_duration(dur*0.25).crossfadeout(0.2)
         
-        # Layer 2: Info
         city_name = str(row.get(city_col, 'Unknown')).upper()
         content2 = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
         txt2_base = create_pil_text_clip(content2, font_path, int(v_size_small*scale))
-        txt2 = apply_motion(txt2_base, motion_profile, w, h, dur, dur*0.25)
-        txt2 = txt2.set_start(dur*0.25).set_duration(dur*0.55)
+        txt2 = apply_motion(txt2_base, motion_profile, w, h, dur, dur*0.25).set_start(dur*0.25).set_duration(dur*0.55)
         
-        # Layer 3: Tickets
         txt3_base = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, int(v_size_small*scale))
-        txt3 = apply_motion(txt3_base, motion_profile, w, h, dur, dur*0.80)
-        txt3 = txt3.set_start(dur*0.80).set_duration(dur*0.20)
+        txt3 = apply_motion(txt3_base, motion_profile, w, h, dur, dur*0.80).set_start(dur*0.80).set_duration(dur*0.20)
         
         CompositeVideoClip([clip, txt1, txt2, txt3]).write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
         clip.close()
