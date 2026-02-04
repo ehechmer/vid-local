@@ -7,12 +7,11 @@ import zipfile
 import shutil
 import random
 import time
-import subprocess  # <--- Added for direct FFprobe calls
+import subprocess
 from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
 from PIL import Image, ImageFont, ImageDraw
 
 # --- COMPATIBILITY PATCH FOR PILLOW 10+ ---
-# Fixes 'AttributeError: module PIL.Image has no attribute ANTIALIAS'
 if not hasattr(Image, 'ANTIALIAS'):
     Image.ANTIALIAS = Image.LANCZOS
 
@@ -49,21 +48,19 @@ def hex_to_rgb(h):
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 def get_col(df, options):
-    """Detects existing columns from a list of potential names."""
     for opt in options:
         if opt in df.columns:
             return opt
     return None
 
 def get_duration_ffprobe(filepath):
-    """Force-reads video duration using system-level ffprobe, bypassing MoviePy errors."""
+    """Force-reads video duration using system-level ffprobe."""
     try:
         cmd = [
             "ffprobe", "-v", "error", "-show_entries",
             "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
             filepath
         ]
-        # Run command and decode output
         output = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode().strip()
         return float(output)
     except Exception:
@@ -139,14 +136,23 @@ def create_pil_text_clip(text, font_path, font_size, video_w, color=TEXT_RGB, st
     return ImageClip(np.array(img))
 
 def apply_motion(clip, style, w, h, duration, start_time):
+    # NOTE: 't' in set_position is GLOBAL time (seconds from video start)
+    # NOTE: 't' in resize is LOCAL time (seconds from clip start)
+    
     if style == "Cinematic Lift":
+        # Global time logic for position
         return clip.set_position(lambda t: ('center', (h/2 + 40) - (min(1, (t-start_time)/0.5) * 40))).crossfadein(0.2)
+    
     elif style == "Zoom Pop":
-        return clip.set_position('center').resize(lambda t: 1.25 - 0.25 * min(1, (t-start_time)/0.35)).crossfadein(0.15)
+        # Local time logic for resize (t starts at 0 for the clip)
+        return clip.set_position('center').resize(lambda t: 1.25 - 0.25 * min(1, t/0.35)).crossfadein(0.15)
+    
     elif style == "Ghost Drift":
         return clip.set_position(lambda t: ((w/2 - clip.w/2) + ((t-start_time) * 18), 'center')).crossfadein(0.4)
+    
     elif style == "Shake":
         return clip.set_position(lambda t: ('center' if (t-start_time) < 0 else ('center', (h/2 - clip.h/2) + random.uniform(-4, 4)))).crossfadein(0.1)
+    
     else:
         return clip.set_position('center')
 
@@ -160,38 +166,51 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
 
     clip = None
     try:
-        # 1. Initialize Clip
+        # 1. Initialize Clip & Force Duration
         clip = VideoFileClip(video_full_path)
         
-        # 2. ROBUST DURATION CHECK (The "Safety Net")
         if not clip.duration or clip.duration == 0:
-            # Attempt 1: Internal reader
             if hasattr(clip, 'reader') and clip.reader.duration:
                 clip.duration = clip.reader.duration
-            
-            # Attempt 2: External FFprobe (Bypasses MoviePy)
             if not clip.duration:
                 clip.duration = get_duration_ffprobe(video_full_path)
-            
-            # Attempt 3: Hard Fallback (Prevents Crash)
             if not clip.duration:
-                print(f"WARNING: Could not detect duration for {filename}. Defaulting to 10s.")
-                clip.duration = 10.0  # Safe default to ensure render completes
+                print(f"WARNING: Defaulting duration to 10s for {filename}")
+                clip.duration = 10.0
         
-        # Now 'dur' is guaranteed to be a float
         w, h = clip.size
         dur = clip.duration
         
-        # 3. Create Overlays
-        txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, v_size_main, w).set_position('center').set_start(0).set_duration(dur*0.25).crossfadeout(0.2)
+        # --- FIX: Define start times and durations explicitly ---
+        t1_dur = dur * 0.25
         
+        t2_start = dur * 0.25
+        t2_dur = dur * 0.55
+        
+        t3_start = dur * 0.80
+        t3_dur = dur * 0.20
+        # -----------------------------------------------------
+
+        # 2. Text 1: Intro (Manual Setup)
+        txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, v_size_main, w)
+        txt1 = txt1.set_duration(t1_dur).set_position('center').set_start(0).crossfadeout(0.2)
+        
+        # 3. Text 2: Middle (Motion Applied to Valid Duration Clip)
         city_name = str(row.get(city_col, 'Unknown')).upper()
         content2 = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
-        txt2 = apply_motion(create_pil_text_clip(content2, font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.25).set_start(dur*0.25).set_duration(dur*0.55)
         
-        txt3 = apply_motion(create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.80).set_start(dur*0.80).set_duration(dur*0.20)
+        txt2_raw = create_pil_text_clip(content2, font_path, v_size_small, w)
+        txt2_raw = txt2_raw.set_duration(t2_dur) # <--- CRITICAL FIX: Set duration BEFORE motion
+        txt2 = apply_motion(txt2_raw, motion_profile, w, h, dur, t2_start)
+        txt2 = txt2.set_start(t2_start)
         
-        # 4. Render
+        # 4. Text 3: Outro
+        txt3_raw = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, v_size_small, w)
+        txt3_raw = txt3_raw.set_duration(t3_dur) # <--- CRITICAL FIX
+        txt3 = apply_motion(txt3_raw, motion_profile, w, h, dur, t3_start)
+        txt3 = txt3.set_start(t3_start)
+        
+        # 5. Render
         final_video = CompositeVideoClip([clip, txt1, txt2, txt3])
         final_video.write_videofile(
             output_path, 
@@ -203,7 +222,6 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
             preset='ultrafast'
         )
         
-        # 5. Cleanup
         clip.close()
         return True, "Success"
         
