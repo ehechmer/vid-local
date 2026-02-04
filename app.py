@@ -5,23 +5,29 @@ import tempfile
 import os
 import zipfile
 import shutil
-from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
+from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, ColorClip
 from PIL import Image, ImageFont, ImageDraw
 
-#---1. BRANDING & CONFIG
+#---1. BRANDING & STYLE CONFIGURATION
 APP_NAME = "L&K Localizer"
 COMPANY_NAME = "LOCH & KEY PRODUCTIONS"
 PRIMARY_COLOR = "#4FBDDB"
 BACKGROUND_COLOR = "#0A1A1E"
-TEXT_COLOR = "#DCE4EA"
+UI_TEXT_COLOR = "#DCE4EA"
+
+# VIDEO TEXT STYLING (Adjust these for visibility)
+TEXT_HEX_COLOR = 'white'      # Main text color
+STROKE_HEX_COLOR = 'black'    # Outline color
+STROKE_WIDTH = 4              # Outline thickness
+OVERLAY_OPACITY = 0.4         # Background tint (0.0 to 1.0)
 
 st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="centered")
 
-#---2. STYLING
+#---2. UI STYLING
 st.markdown(f"""
 <style>
-    .stApp {{ background-color: {BACKGROUND_COLOR}; color: {TEXT_COLOR}; font-family: 'Helvetica Neue', sans-serif; }}
-    h1 {{ color: {TEXT_COLOR}; text-transform: uppercase; letter-spacing: 4px; text-align: center; font-size: 40px; }}
+    .stApp {{ background-color: {BACKGROUND_COLOR}; color: {UI_TEXT_COLOR}; font-family: 'Helvetica Neue', sans-serif; }}
+    h1 {{ color: {UI_TEXT_COLOR}; text-transform: uppercase; letter-spacing: 4px; text-align: center; font-size: 40px; }}
     h3 {{ color: {PRIMARY_COLOR}; font-weight: 600; text-transform: uppercase; text-align: center; margin-top: -20px; letter-spacing: 2px; }}
     .stButton>button {{ background-color: transparent; color: {PRIMARY_COLOR}; border: 2px solid {PRIMARY_COLOR}; padding: 10px; width: 100%; font-weight: bold; }}
     .stButton>button:hover {{ background-color: {PRIMARY_COLOR}; color: {BACKGROUND_COLOR}; }}
@@ -30,7 +36,6 @@ st.markdown(f"""
 
 #---3. HELPER: DYNAMIC COLUMN FINDER
 def get_col(df, possible_names):
-    """Finds a column in df from a list of possible names, ignoring case/spaces."""
     for name in possible_names:
         for col in df.columns:
             if col.strip().lower() == name.lower():
@@ -38,7 +43,7 @@ def get_col(df, possible_names):
     return None
 
 #---4. VIDEO ENGINE
-def create_pil_text_clip(text, font_path, font_size, color, stroke_width=3, stroke_color='black'):
+def create_pil_text_clip(text, font_path, font_size, color, stroke_width=STROKE_WIDTH, stroke_color=STROKE_HEX_COLOR):
     try:
         font = ImageFont.truetype(font_path, int(font_size)) if font_path else ImageFont.load_default()
     except:
@@ -47,9 +52,12 @@ def create_pil_text_clip(text, font_path, font_size, color, stroke_width=3, stro
     dummy_img = Image.new('RGBA', (1, 1))
     draw = ImageDraw.Draw(dummy_img)
     bbox = draw.textbbox((0, 0), text, font=font, align='center', stroke_width=stroke_width)
-    img = Image.new('RGBA', (int((bbox[2]-bbox[0])+60), int((bbox[3]-bbox[1])+60)), (0, 0, 0, 0))
+    
+    w, h = int((bbox[2]-bbox[0])+60), int((bbox[3]-bbox[1])+60)
+    img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.text((int(30-bbox[0]), int(30-bbox[1])), text, font=font, fill=color, align='center', stroke_width=stroke_width, stroke_fill=stroke_color)
+    draw.text((int(30-bbox[0]), int(30-bbox[1])), text, font=font, fill=color, align='center', 
+              stroke_width=stroke_width, stroke_fill=stroke_color)
     return ImageClip(np.array(img))
 
 def render_video(row, videos_dir, font_path, output_path, col_map):
@@ -59,7 +67,7 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
     filename = str(row.get(fname_col, '')).strip()
     video_full_path = os.path.join(videos_dir, filename)
     if not filename or not os.path.exists(video_full_path): 
-        return False, f"File '{filename}' not found in ZIP"
+        return False, f"File '{filename}' not found"
 
     try:
         clip = VideoFileClip(video_full_path)
@@ -67,26 +75,33 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
         dur = clip.duration
         scale = 1.0 if (w / h) < 0.7 else 0.75
         
-        # Layer 1
-        txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, int(80*scale), 'white').set_position('center').set_start(0).set_duration(dur*0.2).crossfadeout(0.3)
+        # Create a semi-transparent black overlay for better readability
+        overlay = ColorClip(size=(w, h), color=(0,0,0)).set_opacity(OVERLAY_OPACITY).set_duration(dur)
         
-        # Layer 2
+        # Layer 1: Band
+        txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, int(80*scale), TEXT_HEX_COLOR)
+        txt1 = txt1.set_position('center').set_start(0).set_duration(dur*0.2).crossfadeout(0.3)
+        
+        # Layer 2: Info (Slide Up)
         city_name = str(row.get(city_col, 'Unknown')).upper()
         content2 = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
-        txt2 = create_pil_text_clip(content2, font_path, int(70*scale), 'white')
-        txt2 = txt2.set_position(lambda t: ('center', (h/2 + 50) - (min(1, t/0.5) * 50))).set_start(dur*0.2).set_duration(dur*0.65).crossfadein(0.3)
+        txt2 = create_pil_text_clip(content2, font_path, int(70*scale), TEXT_HEX_COLOR)
+        txt2 = txt2.set_position(lambda t: ('center', (h/2 + 50) - (min(1, t/0.5) * 50)))
+        txt2 = txt2.set_start(dur*0.2).set_duration(dur*0.65).crossfadein(0.3)
         
-        # Layer 3
-        txt3 = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, int(70*scale), 'white').set_position('center').set_start(dur*0.85).set_duration(dur*0.15).crossfadein(0.2)
+        # Layer 3: Tickets
+        txt3 = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, int(70*scale), TEXT_HEX_COLOR)
+        txt3 = txt3.set_position('center').set_start(dur*0.85).set_duration(dur*0.15).crossfadein(0.2)
 
-        final = CompositeVideoClip([clip, txt1, txt2, txt3])
+        # Composite with Overlay
+        final = CompositeVideoClip([clip, overlay, txt1, txt2, txt3])
         final.write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
         clip.close()
         return True, "Success"
     except Exception as e:
         return False, str(e)
 
-#---5. UI
+#---5. UI LAYOUT
 st.title(APP_NAME)
 st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
@@ -99,28 +114,24 @@ with c2:
 
 if uploaded_zip and uploaded_csv:
     df = pd.read_csv(uploaded_csv)
-    
-    # Map columns once
     col_map = {
         'filename': get_col(df, ['Filename', 'File Name', 'Video', 'file']),
         'city': get_col(df, ['City', 'Location', 'Town'])
     }
     
     if not col_map['filename']:
-        st.error("🚨 ERROR: Could not find a 'Filename' column in your CSV. Please check the header name.")
+        st.error("🚨 ERROR: Could not find a 'Filename' column in your CSV.")
     else:
-        with st.expander("📊 STEP 4: VALIDATE FILENAMES", expanded=True):
+        with st.expander("📊 STEP 4: VALIDATE FILENAMES"):
             if st.button("CHECK ZIP CONTENTS"):
                 with zipfile.ZipFile(uploaded_zip, 'r') as z:
                     zip_files = [os.path.basename(f) for f in z.namelist() if not f.endswith('/')]
-                
                 fname_col = col_map['filename']
                 missing = [f for f in df[fname_col].tolist() if str(f).strip() not in zip_files]
                 if missing:
-                    st.error(f"Missing {len(missing)} files in ZIP!")
-                    st.write("❌ " + ", ".join([str(m) for m in missing]))
+                    st.error(f"Missing {len(missing)} files: {', '.join([str(m) for m in missing])}")
                 else:
-                    st.success("All CSV filenames found in ZIP!")
+                    st.success("All filenames found!")
 
         st.markdown("---")
         st.subheader("🔍 PREVIEW ENGINE")
@@ -131,13 +142,12 @@ if uploaded_zip and uploaded_csv:
             base_dir = tempfile.mkdtemp()
             try:
                 v_dir = os.path.join(base_dir, "v")
-                os.makedirs(v_dir, exist_ok=True) #
+                os.makedirs(v_dir, exist_ok=True)
                 with zipfile.ZipFile(uploaded_zip, 'r') as z:
                     for member in z.infolist():
                         if not member.is_dir():
                             member.filename = os.path.basename(member.filename)
                             z.extract(member, v_dir)
-                
                 f_p = os.path.join(base_dir, "f.ttf") if uploaded_font else None
                 if f_p: 
                     with open(f_p, "wb") as f: f.write(uploaded_font.read())
@@ -154,8 +164,7 @@ if uploaded_zip and uploaded_csv:
             base_dir = tempfile.mkdtemp()
             try:
                 v_dir, o_dir = os.path.join(base_dir, "v"), os.path.join(base_dir, "o")
-                os.makedirs(v_dir, exist_ok=True); os.makedirs(o_dir, exist_ok=True) #
-                
+                os.makedirs(v_dir, exist_ok=True); os.makedirs(o_dir, exist_ok=True)
                 with zipfile.ZipFile(uploaded_zip, 'r') as z:
                     for m in z.infolist():
                         if not m.is_dir():
@@ -166,20 +175,16 @@ if uploaded_zip and uploaded_csv:
                 if f_p: 
                     with open(f_p, "wb") as f: f.write(uploaded_font.read())
 
-                processed = []
+                processed, log_data = [], []
                 status_container = st.empty()
-                log_data = []
                 prog = st.progress(0)
                 
                 for i, row in df.iterrows():
                     city = str(row.get(col_map['city'], 'Unknown'))
                     out_path = os.path.join(o_dir, f"Promo_{city.replace(' ', '_')}.mp4")
-                    
                     success, msg = render_video(row, v_dir, f_p, out_path, col_map)
-                    
-                    log_data.append({"City": city, "Status": "✅ Success" if success else f"❌ Failed: {msg}"})
+                    log_data.append({"City": city, "Status": "✅" if success else f"❌ {msg}"})
                     status_container.table(log_data)
-                    
                     if success: processed.append(out_path)
                     prog.progress((i + 1) / len(df))
 
@@ -187,6 +192,5 @@ if uploaded_zip and uploaded_csv:
                     z_path = os.path.join(base_dir, "Results.zip")
                     with zipfile.ZipFile(z_path, 'w') as z:
                         for f in processed: z.write(f, os.path.basename(f))
-                    st.success(f"Successfully generated {len(processed)} videos!")
                     st.download_button("Download All Videos", open(z_path, "rb"), "Tour_Assets.zip")
             finally: shutil.rmtree(base_dir)
