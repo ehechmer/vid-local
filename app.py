@@ -29,8 +29,9 @@ with st.sidebar:
     v_text_color = st.color_picker("Text Color", "#FFFFFF")
     v_stroke_color = st.color_picker("Outline Color", "#000000")
     v_stroke_width = st.slider("Outline Thickness", 1, 15, 4)
-    v_size_main = st.slider("Main Title Size", 40, 250, 150)
-    v_size_small = st.slider("Small Print Size", 20, 200, 120)
+    v_shadow_offset = st.slider("Drop Shadow Offset", 0, 10, 4)
+    v_size_main = st.slider("Max Title Size", 40, 300, 150)
+    v_size_small = st.slider("Max Small Print Size", 20, 250, 120)
     
     st.markdown("---")
     if st.button("♻️ RESET EVERYTHING"):
@@ -43,62 +44,63 @@ def hex_to_rgb(h):
 TEXT_RGB = hex_to_rgb(v_text_color)
 STROKE_RGB = hex_to_rgb(v_stroke_color)
 
-# Forced High-Contrast UI Colors for Dark Mode visibility
 BG_COLOR = "#0A1A1E" if ui_mode == "Dark Mode" else "#F0F2F6"
 UI_LABEL_COLOR = "#FFFFFF" if ui_mode == "Dark Mode" else "#000000"
 
 st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="centered")
 
-#---2. HIGH-CONTRAST UI STYLING
 st.markdown(f"""
 <style>
     .stApp {{ background-color: {BG_COLOR}; color: {UI_LABEL_COLOR}; }}
-    
-    /* Force ALL labels to be Pure White in Dark Mode */
-    label, .stMarkdown p, .stFileUploader label p {{ 
-        color: {UI_LABEL_COLOR} !important; 
-        font-weight: 800 !important; 
-        font-size: 1.1rem !important;
-        opacity: 1 !important;
-    }}
-    
-    .stFileUploader section {{ 
-        border: 2px dashed {PRIMARY_COLOR} !important; 
-        background-color: rgba(255, 255, 255, 0.05) !important; 
-    }}
-    
-    h1, h3 {{ color: {UI_LABEL_COLOR}; text-align: center; text-transform: uppercase; }}
+    label, .stMarkdown p, .stFileUploader label p {{ color: {UI_LABEL_COLOR} !important; font-weight: 800 !important; }}
+    .stFileUploader section {{ border: 2px dashed {PRIMARY_COLOR} !important; background-color: rgba(255, 255, 255, 0.05) !important; }}
+    h1, h3 {{ color: {UI_LABEL_COLOR} !important; text-align: center; text-transform: uppercase; }}
     h4 {{ color: {PRIMARY_COLOR} !important; border-bottom: 2px solid {PRIMARY_COLOR}; }}
-    
     .stButton>button {{ border: 2px solid {PRIMARY_COLOR}; color: {PRIMARY_COLOR}; font-weight: bold; width: 100%; }}
 </style>
 """, unsafe_allow_html=True)
 
-#---3. HELPER: COLUMN FINDER
-def get_col(df, possible_names):
-    for name in possible_names:
-        for col in df.columns:
-            if col.strip().lower() == name.lower(): return col
-    return None
-
-#---4. TYPOGRAPHY ENGINE
-def create_pil_text_clip(text, font_path, font_size, color=TEXT_RGB, stroke_width=v_stroke_width, stroke_color=STROKE_RGB):
+#---3. HELPER: DYNAMIC FONT SCALER
+def get_scaled_font(text, font_path, max_size, target_width):
+    size = max_size
     try:
-        font = ImageFont.truetype(font_path, int(font_size)) if font_path else ImageFont.load_default()
+        font = ImageFont.truetype(font_path, int(size)) if font_path else ImageFont.load_default()
     except:
         font = ImageFont.load_default()
+        return font, size
+
+    # Simple loop to shrink font if it exceeds the safe width
+    for s in range(int(max_size), 20, -5):
+        test_font = ImageFont.truetype(font_path, s) if font_path else font
+        dummy_img = Image.new('RGBA', (1, 1))
+        draw = ImageDraw.Draw(dummy_img)
+        bbox = draw.textbbox((0, 0), text, font=test_font, spacing=-12)
+        if (bbox[2] - bbox[0]) < target_width:
+            return test_font, s
+    return font, size
+
+#---4. TYPOGRAPHY ENGINE
+def create_pil_text_clip(text, font_path, font_size, video_w, color=TEXT_RGB, stroke_width=v_stroke_width, stroke_color=STROKE_RGB):
+    # Auto-scale font based on video width
+    target_w = video_w * 0.85  # 15% margin
+    font, final_size = get_scaled_font(text, font_path, font_size, target_w)
     
     dummy_img = Image.new('RGBA', (1, 1))
     draw = ImageDraw.Draw(dummy_img)
-    bbox = draw.textbbox((0, 0), text, font=font, align='center', stroke_width=stroke_width, spacing=-10)
-    w, h = int((bbox[2]-bbox[0])+80), int((bbox[3]-bbox[1])+80)
+    bbox = draw.textbbox((0, 0), text, font=font, align='center', stroke_width=stroke_width, spacing=-12)
+    w, h = int((bbox[2]-bbox[0])+100), int((bbox[3]-bbox[1])+100)
     img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    pos = (int(40-bbox[0]), int(40-bbox[1]))
-    draw.text(pos, text, font=font, fill=color, align='center', stroke_width=stroke_width, stroke_fill=stroke_color, spacing=-10)
+    pos = (int(50-bbox[0]), int(50-bbox[1]))
+    
+    if v_shadow_offset > 0:
+        draw.text((pos[0]+v_shadow_offset, pos[1]+v_shadow_offset), text, font=font, fill=stroke_color, align='center', spacing=-12)
+    
+    draw.text(pos, text, font=font, fill=color, align='center', stroke_width=stroke_width, stroke_fill=stroke_color, spacing=-12)
     return ImageClip(np.array(img))
 
 def apply_motion(clip, style, w, h, duration, start_time):
+    safe_dur = max(0.1, duration)
     if style == "Cinematic Lift":
         return clip.set_position(lambda t: ('center', (h/2 + 40) - (min(1, (t-start_time)/0.5) * 40))).crossfadein(0.2)
     elif style == "Zoom Pop":
@@ -114,34 +116,26 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
     fname_col, city_col = col_map.get('filename'), col_map.get('city')
     filename = str(row.get(fname_col, '')).strip()
     video_full_path = os.path.join(videos_dir, filename)
-    
-    if not filename or not os.path.exists(video_full_path): 
-        return False, f"File '{filename}' not found"
+    if not filename or not os.path.exists(video_full_path): return False, f"File '{filename}' not found"
 
     try:
-        # Stabilized duration loading
-        clip = VideoFileClip(video_full_path)
-        if clip.duration is None or clip.duration == 0:
-            time.sleep(0.5) # Brief wait for OS file lock
-            clip = VideoFileClip(video_full_path)
+        with VideoFileClip(video_full_path) as clip:
+            if not hasattr(clip, 'duration') or clip.duration is None or clip.duration == 0:
+                time.sleep(0.5)
+                clip = VideoFileClip(video_full_path)
+            w, h = clip.size
+            dur = clip.duration
             
-        w, h = clip.size
-        dur = clip.duration
-        scale = 1.0 if (w / h) < 0.7 else 0.75
-        
-        txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, int(v_size_main*scale))
-        txt1 = txt1.set_position('center').set_start(0).set_duration(dur*0.25).crossfadeout(0.2)
-        
-        city_name = str(row.get(city_col, 'Unknown')).upper()
-        content2 = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
-        txt2_base = create_pil_text_clip(content2, font_path, int(v_size_small*scale))
-        txt2 = apply_motion(txt2_base, motion_profile, w, h, dur, dur*0.25).set_start(dur*0.25).set_duration(dur*0.55)
-        
-        txt3_base = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, int(v_size_small*scale))
-        txt3 = apply_motion(txt3_base, motion_profile, w, h, dur, dur*0.80).set_start(dur*0.80).set_duration(dur*0.20)
-        
-        CompositeVideoClip([clip, txt1, txt2, txt3]).write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
-        clip.close()
+            # Pass clip width for dynamic scaling
+            txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, v_size_main, w).set_position('center').set_start(0).set_duration(dur*0.25).crossfadeout(0.2)
+            
+            city_name = str(row.get(city_col, 'Unknown')).upper()
+            content2 = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
+            txt2 = create_pil_text_clip(content2, font_path, v_size_small, w).set_position('center').set_start(dur*0.25).set_duration(dur*0.55)
+            
+            txt3 = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, v_size_small, w).set_position('center').set_start(dur*0.80).set_duration(dur*0.20)
+            
+            CompositeVideoClip([clip, txt1, txt2, txt3]).write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
         return True, "Success"
     except Exception as e: return False, str(e)
 
@@ -158,31 +152,46 @@ with c2:
 
 if uploaded_zip and uploaded_csv:
     df = pd.read_csv(uploaded_csv)
-    col_map = {'filename': get_col(df, ['Filename', 'File Name', 'Video']), 'city': get_col(df, ['City', 'Location'])}
+    col_map = {'filename': col_map_fn if (col_map_fn := get_col(df, ['Filename', 'File Name', 'Video'])) else None, 
+               'city': col_map_ct if (col_map_ct := get_col(df, ['City', 'Location'])) else None}
     
     if not col_map['filename']:
         st.error("🚨 Check CSV headers!")
     else:
         st.markdown("---")
-        st.subheader(f"🔍 PREVIEW ENGINE")
+        st.subheader("🔍 PREVIEW ENGINE")
         preview_row = st.selectbox("Pick city to test graphics:", df.index, format_func=lambda x: f"{df.iloc[x].get(col_map['city'], 'Unknown')}")
         
-        if st.button("RENDER PREVIEW WITH SETTINGS"):
-            base_dir = tempfile.mkdtemp()
-            try:
-                v_dir = os.path.join(base_dir, "v"); os.makedirs(v_dir, exist_ok=True)
-                with zipfile.ZipFile(uploaded_zip, 'r') as z:
-                    for member in z.infolist():
-                        if not member.is_dir(): member.filename = os.path.basename(member.filename); z.extract(member, v_dir)
-                f_p = os.path.join(base_dir, "f.ttf") if uploaded_font else None
-                if f_p: 
-                    with open(f_p, "wb") as f: f.write(uploaded_font.read())
-                with st.spinner("Rendering..."):
-                    out = os.path.join(base_dir, "p.mp4")
-                    success, msg = render_video(df.iloc[preview_row], v_dir, f_p, out, col_map)
-                    if success: st.video(out)
-                    else: st.error(msg)
-            finally: shutil.rmtree(base_dir)
+        btn_col1, btn_col2 = st.columns(2)
+        with btn_col1:
+            if st.button("⚡ FAST TEXT PREVIEW (ALL LAYERS)"):
+                row = df.iloc[preview_row]
+                city_name = str(row.get(col_map['city'], 'Unknown')).upper()
+                # Mock video width as 1080 for fast preview logic
+                t1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", None, v_size_main, 1080)
+                t2 = create_pil_text_clip(f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper(), None, v_size_small, 1080)
+                t3 = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), None, v_size_small, 1080)
+                st.image(t1.img, caption="1. INTRO LAYER")
+                st.image(t2.img, caption="2. MIDDLE LAYER")
+                st.image(t3.img, caption="3. OUTRO LAYER")
+        
+        with btn_col2:
+            if st.button("🎬 FULL VIDEO PREVIEW"):
+                base_dir = tempfile.mkdtemp()
+                try:
+                    v_dir = os.path.join(base_dir, "v"); os.makedirs(v_dir, exist_ok=True)
+                    with zipfile.ZipFile(uploaded_zip, 'r') as z:
+                        for member in z.infolist():
+                            if not member.is_dir(): member.filename = os.path.basename(member.filename); z.extract(member, v_dir)
+                    f_p = os.path.join(base_dir, "f.ttf") if uploaded_font else None
+                    if f_p: 
+                        with open(f_p, "wb") as f: f.write(uploaded_font.read())
+                    with st.spinner("Rendering Video..."):
+                        out = os.path.join(base_dir, "p.mp4")
+                        success, msg = render_video(df.iloc[preview_row], v_dir, f_p, out, col_map)
+                        if success: st.video(out)
+                        else: st.error(f"Render Error: {msg}")
+                finally: shutil.rmtree(base_dir)
 
         st.subheader("🚀 BATCH PROCESSING")
         if st.button("RUN FULL BATCH"):
