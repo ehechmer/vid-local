@@ -28,7 +28,16 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-#---3. VIDEO ENGINE
+#---3. HELPER: DYNAMIC COLUMN FINDER
+def get_col(df, possible_names):
+    """Finds a column in df from a list of possible names, ignoring case/spaces."""
+    for name in possible_names:
+        for col in df.columns:
+            if col.strip().lower() == name.lower():
+                return col
+    return None
+
+#---4. VIDEO ENGINE
 def create_pil_text_clip(text, font_path, font_size, color, stroke_width=3, stroke_color='black'):
     try:
         font = ImageFont.truetype(font_path, int(font_size)) if font_path else ImageFont.load_default()
@@ -43,11 +52,14 @@ def create_pil_text_clip(text, font_path, font_size, color, stroke_width=3, stro
     draw.text((int(30-bbox[0]), int(30-bbox[1])), text, font=font, fill=color, align='center', stroke_width=stroke_width, stroke_fill=stroke_color)
     return ImageClip(np.array(img))
 
-def render_video(row, videos_dir, font_path, output_path):
-    filename = str(row.get('Filename', '')).strip()
+def render_video(row, videos_dir, font_path, output_path, col_map):
+    fname_col = col_map.get('filename')
+    city_col = col_map.get('city')
+    
+    filename = str(row.get(fname_col, '')).strip()
     video_full_path = os.path.join(videos_dir, filename)
     if not filename or not os.path.exists(video_full_path): 
-        return False, "File not found"
+        return False, f"File '{filename}' not found in ZIP"
 
     try:
         clip = VideoFileClip(video_full_path)
@@ -59,7 +71,8 @@ def render_video(row, videos_dir, font_path, output_path):
         txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, int(80*scale), 'white').set_position('center').set_start(0).set_duration(dur*0.2).crossfadeout(0.3)
         
         # Layer 2
-        content2 = f"{row.get('Date','')}\n{str(row.get('City','')).upper()}\n{row.get('Venue','')}".upper()
+        city_name = str(row.get(city_col, 'Unknown')).upper()
+        content2 = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
         txt2 = create_pil_text_clip(content2, font_path, int(70*scale), 'white')
         txt2 = txt2.set_position(lambda t: ('center', (h/2 + 50) - (min(1, t/0.5) * 50))).set_start(dur*0.2).set_duration(dur*0.65).crossfadein(0.3)
         
@@ -73,7 +86,7 @@ def render_video(row, videos_dir, font_path, output_path):
     except Exception as e:
         return False, str(e)
 
-#---4. UI
+#---5. UI
 st.title(APP_NAME)
 st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
@@ -87,82 +100,93 @@ with c2:
 if uploaded_zip and uploaded_csv:
     df = pd.read_csv(uploaded_csv)
     
-    with st.expander("📊 STEP 4: VALIDATE FILENAMES", expanded=True):
-        if st.button("CHECK ZIP CONTENTS"):
-            with zipfile.ZipFile(uploaded_zip, 'r') as z:
-                zip_files = [os.path.basename(f) for f in z.namelist() if not f.endswith('/')]
-            
-            missing = [f for f in df['Filename'].tolist() if str(f).strip() not in zip_files]
-            if missing:
-                st.error(f"Missing {len(missing)} files in ZIP!")
-                st.write("❌ " + ", ".join([str(m) for m in missing]))
-            else:
-                st.success("All CSV filenames found in ZIP!")
-
-    st.markdown("---")
-    st.subheader("🔍 PREVIEW ENGINE")
-    preview_row = st.selectbox("Select row", df.index, format_func=lambda x: f"{df.iloc[x].get('City')} ({df.iloc[x].get('Filename')})")
+    # Map columns once
+    col_map = {
+        'filename': get_col(df, ['Filename', 'File Name', 'Video', 'file']),
+        'city': get_col(df, ['City', 'Location', 'Town'])
+    }
     
-    if st.button("GENERATE PREVIEW"):
-        base_dir = tempfile.mkdtemp()
-        try:
-            v_dir = os.path.join(base_dir, "v")
-            os.makedirs(v_dir, exist_ok=True) #
-            with zipfile.ZipFile(uploaded_zip, 'r') as z:
-                for member in z.infolist():
-                    if not member.is_dir():
-                        member.filename = os.path.basename(member.filename)
-                        z.extract(member, v_dir)
-            
-            f_p = os.path.join(base_dir, "f.ttf") if uploaded_font else None
-            if f_p: 
-                with open(f_p, "wb") as f: f.write(uploaded_font.read())
-
-            with st.spinner("Rendering..."):
-                out = os.path.join(base_dir, "p.mp4")
-                success, msg = render_video(df.iloc[preview_row], v_dir, f_p, out)
-                if success: st.video(out)
-                else: st.error(f"Error: {msg}")
-        finally: shutil.rmtree(base_dir)
-
-    st.subheader("🚀 BATCH PROCESSING")
-    if st.button("RUN FULL BATCH"):
-        base_dir = tempfile.mkdtemp()
-        try:
-            v_dir, o_dir = os.path.join(base_dir, "v"), os.path.join(base_dir, "o")
-            os.makedirs(v_dir, exist_ok=True); os.makedirs(o_dir, exist_ok=True) #
-            
-            with zipfile.ZipFile(uploaded_zip, 'r') as z:
-                for m in z.infolist():
-                    if not m.is_dir():
-                        m.filename = os.path.basename(m.filename)
-                        z.extract(m, v_dir)
-
-            f_p = os.path.join(base_dir, "f.ttf") if uploaded_font else None
-            if f_p: 
-                with open(f_p, "wb") as f: f.write(uploaded_font.read())
-
-            processed = []
-            status_container = st.empty()
-            log_data = []
-            prog = st.progress(0)
-            
-            for i, row in df.iterrows():
-                city = row.get('City', 'Unknown')
-                out_path = os.path.join(o_dir, f"Promo_{city.replace(' ', '_')}.mp4")
+    if not col_map['filename']:
+        st.error("🚨 ERROR: Could not find a 'Filename' column in your CSV. Please check the header name.")
+    else:
+        with st.expander("📊 STEP 4: VALIDATE FILENAMES", expanded=True):
+            if st.button("CHECK ZIP CONTENTS"):
+                with zipfile.ZipFile(uploaded_zip, 'r') as z:
+                    zip_files = [os.path.basename(f) for f in z.namelist() if not f.endswith('/')]
                 
-                success, msg = render_video(row, v_dir, f_p, out_path)
-                
-                log_data.append({"City": city, "Status": "✅ Success" if success else f"❌ Failed: {msg}"})
-                status_container.table(log_data)
-                
-                if success: processed.append(out_path)
-                prog.progress((i + 1) / len(df))
+                fname_col = col_map['filename']
+                missing = [f for f in df[fname_col].tolist() if str(f).strip() not in zip_files]
+                if missing:
+                    st.error(f"Missing {len(missing)} files in ZIP!")
+                    st.write("❌ " + ", ".join([str(m) for m in missing]))
+                else:
+                    st.success("All CSV filenames found in ZIP!")
 
-            if processed:
-                z_path = os.path.join(base_dir, "Results.zip")
-                with zipfile.ZipFile(z_path, 'w') as z:
-                    for f in processed: z.write(f, os.path.basename(f))
-                st.success(f"Successfully generated {len(processed)} videos!")
-                st.download_button("Download All Videos", open(z_path, "rb"), "Tour_Assets.zip")
-        finally: shutil.rmtree(base_dir)
+        st.markdown("---")
+        st.subheader("🔍 PREVIEW ENGINE")
+        preview_row = st.selectbox("Select row", df.index, 
+                                   format_func=lambda x: f"{df.iloc[x].get(col_map['city'], 'Unknown')} ({df.iloc[x].get(col_map['filename'])})")
+        
+        if st.button("GENERATE PREVIEW"):
+            base_dir = tempfile.mkdtemp()
+            try:
+                v_dir = os.path.join(base_dir, "v")
+                os.makedirs(v_dir, exist_ok=True) #
+                with zipfile.ZipFile(uploaded_zip, 'r') as z:
+                    for member in z.infolist():
+                        if not member.is_dir():
+                            member.filename = os.path.basename(member.filename)
+                            z.extract(member, v_dir)
+                
+                f_p = os.path.join(base_dir, "f.ttf") if uploaded_font else None
+                if f_p: 
+                    with open(f_p, "wb") as f: f.write(uploaded_font.read())
+
+                with st.spinner("Rendering..."):
+                    out = os.path.join(base_dir, "p.mp4")
+                    success, msg = render_video(df.iloc[preview_row], v_dir, f_p, out, col_map)
+                    if success: st.video(out)
+                    else: st.error(f"Error: {msg}")
+            finally: shutil.rmtree(base_dir)
+
+        st.subheader("🚀 BATCH PROCESSING")
+        if st.button("RUN FULL BATCH"):
+            base_dir = tempfile.mkdtemp()
+            try:
+                v_dir, o_dir = os.path.join(base_dir, "v"), os.path.join(base_dir, "o")
+                os.makedirs(v_dir, exist_ok=True); os.makedirs(o_dir, exist_ok=True) #
+                
+                with zipfile.ZipFile(uploaded_zip, 'r') as z:
+                    for m in z.infolist():
+                        if not m.is_dir():
+                            m.filename = os.path.basename(m.filename)
+                            z.extract(m, v_dir)
+
+                f_p = os.path.join(base_dir, "f.ttf") if uploaded_font else None
+                if f_p: 
+                    with open(f_p, "wb") as f: f.write(uploaded_font.read())
+
+                processed = []
+                status_container = st.empty()
+                log_data = []
+                prog = st.progress(0)
+                
+                for i, row in df.iterrows():
+                    city = str(row.get(col_map['city'], 'Unknown'))
+                    out_path = os.path.join(o_dir, f"Promo_{city.replace(' ', '_')}.mp4")
+                    
+                    success, msg = render_video(row, v_dir, f_p, out_path, col_map)
+                    
+                    log_data.append({"City": city, "Status": "✅ Success" if success else f"❌ Failed: {msg}"})
+                    status_container.table(log_data)
+                    
+                    if success: processed.append(out_path)
+                    prog.progress((i + 1) / len(df))
+
+                if processed:
+                    z_path = os.path.join(base_dir, "Results.zip")
+                    with zipfile.ZipFile(z_path, 'w') as z:
+                        for f in processed: z.write(f, os.path.basename(f))
+                    st.success(f"Successfully generated {len(processed)} videos!")
+                    st.download_button("Download All Videos", open(z_path, "rb"), "Tour_Assets.zip")
+            finally: shutil.rmtree(base_dir)
