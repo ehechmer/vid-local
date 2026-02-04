@@ -9,10 +9,10 @@ from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
 from PIL import Image, ImageFont, ImageDraw
 
 # --- 1. BRANDING CONFIGURATION ---
-APP_NAME = "VID_LOCAL_PRO"
-COMPANY_NAME = "LOCH & KEY PRODUCTIONS"
-PRIMARY_COLOR = "#C5A059"  # Cinema Gold
-BACKGROUND_COLOR = "#0e0e0e"
+APP_NAME = "L&K Localizer"
+COMPANY_NAME = "LOCH & KEY"
+PRIMARY_COLOR = "#4FBDDB"  # L&K Blue
+BACKGROUND_COLOR = "#0A1A1E"
 TEXT_COLOR = "#ffffff"
 
 # --- 2. PAGE SETUP ---
@@ -194,3 +194,4 @@ if uploaded_zip and uploaded_csv:
         finally:
             # Cleanup temp files to keep server healthy
             shutil.rmtree(base_dir)
+
