@@ -9,6 +9,9 @@ import random
 import time
 from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
 from PIL import Image, ImageFont, ImageDraw
+from PIL import Image
+if not hasattr(Image, 'ANTIALIAS'):
+    Image.ANTIALIAS = Image.LANCZOS
 
 #---1. BRANDING & STYLE CONFIGURATION
 APP_NAME = "L&K Localizer"
@@ -240,3 +243,4 @@ if uploaded_zip and uploaded_csv:
                         for f in processed: z.write(f, os.path.basename(f))
                     st.download_button("Download All Videos", open(z_path, "rb"), "Tour_Assets.zip")
             finally: shutil.rmtree(base_dir)
+
