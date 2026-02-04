@@ -7,6 +7,7 @@ import zipfile
 import shutil
 import random
 import time
+import subprocess  # <--- Added for direct FFprobe calls
 from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
 from PIL import Image, ImageFont, ImageDraw
 
@@ -54,10 +55,24 @@ def get_col(df, options):
             return opt
     return None
 
+def get_duration_ffprobe(filepath):
+    """Force-reads video duration using system-level ffprobe, bypassing MoviePy errors."""
+    try:
+        cmd = [
+            "ffprobe", "-v", "error", "-show_entries",
+            "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
+            filepath
+        ]
+        # Run command and decode output
+        output = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode().strip()
+        return float(output)
+    except Exception:
+        return None
+
 TEXT_RGB = hex_to_rgb(v_text_color)
 STROKE_RGB = hex_to_rgb(v_stroke_color)
 
-# Swapped Default Logic
+# Theme Logic
 if ui_mode == "Light Mode":
     BG_COLOR = "#F0F2F6"
     UI_LABEL_COLOR = "#000000"
@@ -139,29 +154,64 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
     fname_col, city_col = col_map.get('filename'), col_map.get('city')
     filename = str(row.get(fname_col, '')).strip()
     video_full_path = os.path.join(videos_dir, filename)
-    if not filename or not os.path.exists(video_full_path): return False, f"File '{filename}' not found"
+    
+    if not filename or not os.path.exists(video_full_path): 
+        return False, f"File '{filename}' not found"
 
+    clip = None
     try:
-        with VideoFileClip(video_full_path) as clip:
-            # --- DURATION HANDSHAKE ---
-            if not clip.duration or clip.duration == 0:
+        # 1. Initialize Clip
+        clip = VideoFileClip(video_full_path)
+        
+        # 2. ROBUST DURATION CHECK (The "Safety Net")
+        if not clip.duration or clip.duration == 0:
+            # Attempt 1: Internal reader
+            if hasattr(clip, 'reader') and clip.reader.duration:
                 clip.duration = clip.reader.duration
             
+            # Attempt 2: External FFprobe (Bypasses MoviePy)
             if not clip.duration:
-                return False, "Failed to read duration."
+                clip.duration = get_duration_ffprobe(video_full_path)
             
-            w, h = clip.size
-            dur = clip.duration
-            
-            txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, v_size_main, w).set_position('center').set_start(0).set_duration(dur*0.25).crossfadeout(0.2)
-            city_name = str(row.get(city_col, 'Unknown')).upper()
-            content2 = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
-            txt2 = apply_motion(create_pil_text_clip(content2, font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.25).set_start(dur*0.25).set_duration(dur*0.55)
-            txt3 = apply_motion(create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.80).set_start(dur*0.80).set_duration(dur*0.20)
-            
-            CompositeVideoClip([clip, txt1, txt2, txt3]).write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
+            # Attempt 3: Hard Fallback (Prevents Crash)
+            if not clip.duration:
+                print(f"WARNING: Could not detect duration for {filename}. Defaulting to 10s.")
+                clip.duration = 10.0  # Safe default to ensure render completes
+        
+        # Now 'dur' is guaranteed to be a float
+        w, h = clip.size
+        dur = clip.duration
+        
+        # 3. Create Overlays
+        txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, v_size_main, w).set_position('center').set_start(0).set_duration(dur*0.25).crossfadeout(0.2)
+        
+        city_name = str(row.get(city_col, 'Unknown')).upper()
+        content2 = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
+        txt2 = apply_motion(create_pil_text_clip(content2, font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.25).set_start(dur*0.25).set_duration(dur*0.55)
+        
+        txt3 = apply_motion(create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.80).set_start(dur*0.80).set_duration(dur*0.20)
+        
+        # 4. Render
+        final_video = CompositeVideoClip([clip, txt1, txt2, txt3])
+        final_video.write_videofile(
+            output_path, 
+            codec='libx264', 
+            audio_codec='aac', 
+            fps=24, 
+            verbose=False, 
+            logger=None, 
+            preset='ultrafast'
+        )
+        
+        # 5. Cleanup
+        clip.close()
         return True, "Success"
-    except Exception as e: return False, str(e)
+        
+    except Exception as e:
+        if clip:
+            try: clip.close() 
+            except: pass
+        return False, str(e)
 
 # --- 4. UI LAYOUT ---
 st.title(APP_NAME)
@@ -182,7 +232,7 @@ if uploaded_zip and uploaded_csv:
     }
     
     if not col_map['filename']:
-        st.error("🚨 Could not find column for filenames. Expected: Filename, Video, or File Name.")
+        st.error("🚨 Check CSV headers! Could not find a 'Filename' or 'Video' column.")
     else:
         st.markdown("---")
         st.subheader("🔍 PREVIEW ENGINE")
