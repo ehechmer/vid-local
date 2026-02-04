@@ -4,11 +4,12 @@ import numpy as np
 import tempfile
 import os
 import zipfile
+import shutil
 from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
 from PIL import Image, ImageFont, ImageDraw
 
 # --- 1. BRANDING CONFIGURATION ---
-APP_NAME = "vid_local"
+APP_NAME = "VID_LOCAL_PRO"
 COMPANY_NAME = "LOCH & KEY PRODUCTIONS"
 PRIMARY_COLOR = "#C5A059"  # Cinema Gold
 BACKGROUND_COLOR = "#0e0e0e"
@@ -27,150 +28,169 @@ st.markdown(f"""
     .stButton>button:hover {{ background-color: {PRIMARY_COLOR}; color: {BACKGROUND_COLOR}; }}
     .stFileUploader label {{ color: {PRIMARY_COLOR}; font-weight: bold; }}
     .stSuccess {{ background-color: rgba(197, 160, 89, 0.2); border-left: 5px solid {PRIMARY_COLOR}; }}
+    .stWarning {{ background-color: rgba(255, 255, 0, 0.1); border-left: 5px solid yellow; }}
     </style>
 """, unsafe_allow_html=True)
 
-# --- 4. TEXT ENGINE (PILLOW REPLACEMENT) ---
+# --- 4. TEXT ENGINE (PILLOW) ---
 def create_pil_text_clip(text, font_path, font_size, color, stroke_width=2, stroke_color='black'):
-    """
-    Generates a transparent text image using PIL (Pillow).
-    Includes safety casts to int() to prevent 'float object' errors.
-    """
-    # 1. Load Font
+    """Generates transparent text image safely using PIL."""
     try:
         if font_path:
             font = ImageFont.truetype(font_path, int(font_size))
         else:
-            # Fallback for Linux servers
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", int(font_size))
-    except Exception:
-        # Ultimate fallback
+    except:
         font = ImageFont.load_default()
 
-    # 2. Calculate Text Size
     dummy_img = Image.new('RGBA', (1, 1))
     draw = ImageDraw.Draw(dummy_img)
-    
-    # Get bounding box. Result might be floats, so we assume inputs are ints but outputs need checking.
     bbox = draw.textbbox((0, 0), text, font=font, align='center', stroke_width=stroke_width)
     
-    # Calculate width/height and FORCE INTEGER (The fix for your error)
     text_width = int(bbox[2] - bbox[0])
     text_height = int(bbox[3] - bbox[1])
-    
-    # Add padding
     width = int(text_width + 40)
     height = int(text_height + 40)
 
-    # 3. Create Image (Image.new strictly requires Integers)
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-
-    # 4. Draw Text
-    # We offset by -bbox[0] to align the text properly inside the box
+    
     x_pos = int(20 - bbox[0])
     y_pos = int(20 - bbox[1])
     
     draw.text((x_pos, y_pos), text, font=font, fill=color, align='center', 
               stroke_width=stroke_width, stroke_fill=stroke_color)
 
-    # 5. Convert to MoviePy ImageClip
     return ImageClip(np.array(img))
 
-# --- 5. VIDEO BATCH PROCESSOR ---
-def process_video_batch(df, video_path, font_path, temp_dir):
+# --- 5. BATCH LOGIC ---
+def process_batch(df, videos_dir, font_path, output_dir):
     generated_paths = []
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    clip = VideoFileClip(video_path)
+    total_files = len(df)
     
     for i, row in df.iterrows():
+        # 1. Identify which video to use
+        # We look for a 'Filename' column in the CSV. If missing, we warn the user.
+        filename = row.get('Filename', None)
+        
+        # If no filename specified, or file not found, skip
+        if not filename or not os.path.exists(os.path.join(videos_dir, filename)):
+            st.warning(f"⚠️ SKIPPING: Could not find video '{filename}' for {row['City']}")
+            continue
+            
+        video_path = os.path.join(videos_dir, filename)
         city_name = str(row['City']).upper()
-        status_text.markdown(f"**PROCESSING:** {city_name}")
+        status_text.markdown(f"**PROCESSING ({i+1}/{total_files}):** {city_name} using *{filename}*")
         
-        # --- TEXT LAYERS (Using New PIL Engine) ---
+        # 2. Load Video & Calculate Dynamic Times
+        clip = VideoFileClip(video_path)
+        duration = clip.duration
         
-        # 1. BAND NAME
-        txt1 = create_pil_text_clip(
-            "LAWRENCE\nWITH JACOB JEFFRIES", 
-            font_path, 80, 'white', stroke_width=3
-        )
-        txt1 = txt1.set_position(('center', 'center')).set_start(0).set_duration(4)
+        # --- DYNAMIC TIMING LOGIC ---
+        # Instead of fixed seconds, we use percentages of the total duration.
+        # T1 (Band): 0% to 20%
+        # T2 (City): 20% to 80%
+        # T3 (Link): 80% to 100%
+        
+        t1_start = 0
+        t1_end = duration * 0.20  # Ends at 20% mark
+        
+        t2_start = t1_end
+        t2_end = duration * 0.85  # Ends at 85% mark
+        
+        t3_start = t2_end
+        t3_end = duration         # Goes to the very end
+        
+        # 3. Create Text Layers
+        
+        # LAYER 1: Band Name
+        txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, 80, 'white', stroke_width=3)
+        txt1 = txt1.set_position(('center', 'center')).set_start(t1_start).set_duration(t1_end - t1_start)
 
-        # 2. DATE/VENUE
+        # LAYER 2: Date & City
         content2 = f"{row['Date']}\n{city_name}\n{row['Venue']}"
-        txt2 = create_pil_text_clip(
-            content2.upper(), 
-            font_path, 70, 'white', stroke_width=3
-        )
-        txt2 = txt2.set_position(('center', 'center')).set_start(4).set_duration(13)
+        txt2 = create_pil_text_clip(content2.upper(), font_path, 70, 'white', stroke_width=3)
+        txt2 = txt2.set_position(('center', 'center')).set_start(t2_start).set_duration(t2_end - t2_start)
 
-        # 3. LINK
+        # LAYER 3: Link
         content3 = f"TICKETS ON SALE NOW\n{row['Ticket_Link']}"
-        txt3 = create_pil_text_clip(
-            content3.upper(), 
-            font_path, 70, 'white', stroke_width=3
-        )
-        txt3 = txt3.set_position(('center', 'center')).set_start(17).set_duration(clip.duration - 17)
+        txt3 = create_pil_text_clip(content3.upper(), font_path, 70, 'white', stroke_width=3)
+        txt3 = txt3.set_position(('center', 'center')).set_start(t3_start).set_duration(t3_end - t3_start)
         
-        # COMPOSITE
+        # 4. Composite & Render
         final = CompositeVideoClip([clip, txt1, txt2, txt3])
         
         output_filename = f"Promo_{city_name.replace(' ', '')}.mp4"
-        output_path = os.path.join(temp_dir, output_filename)
+        output_path = os.path.join(output_dir, output_filename)
         
-        # RENDER
         final.write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
         
         generated_paths.append(output_path)
-        progress_bar.progress((i + 1) / len(df))
+        progress_bar.progress((i + 1) / total_files)
+        clip.close()
         
-    clip.close()
     return generated_paths
 
-# --- 6. FRONT END INTERFACE ---
-st.title("VID_LOCAL")
+# --- 6. FRONT END ---
+st.title("VID_LOCAL PRO")
 st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
 with st.container():
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("#### ASSETS")
-        uploaded_video = st.file_uploader("Clean Video File (.mp4)", type=["mp4"])
-        uploaded_font = st.file_uploader("Font File (.ttf) [Recommended]", type=["ttf"])
+        st.markdown("#### 1. ASSETS")
+        uploaded_zip = st.file_uploader("Upload ZIP of Raw Videos", type=["zip"])
+        uploaded_font = st.file_uploader("Upload Font (.ttf) [Optional]", type=["ttf"])
     with col2:
-        st.markdown("#### DATA")
-        uploaded_csv = st.file_uploader("Tour Schedule (.csv)", type=["csv"])
+        st.markdown("#### 2. DATA")
+        uploaded_csv = st.file_uploader("Upload Schedule (.csv)", type=["csv"])
+        if uploaded_csv:
+            st.info("Ensure CSV has column: 'Filename'")
 
-if uploaded_video and uploaded_csv:
+if uploaded_zip and uploaded_csv:
     st.markdown("---")
-    if st.button("INITIALIZE RENDER ENGINE"):
-        with tempfile.TemporaryDirectory() as temp_dir:
+    if st.button("⚡ INITIALIZE BATCH ENGINE"):
+        # Create a workspace
+        base_dir = tempfile.mkdtemp()
+        videos_dir = os.path.join(base_dir, "videos")
+        output_dir = os.path.join(base_dir, "output")
+        os.makedirs(videos_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 1. Unzip Videos
+        with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
+            zip_ref.extractall(videos_dir)
             
-            # Save Inputs
-            tfile_vid = os.path.join(temp_dir, "input.mp4")
-            with open(tfile_vid, "wb") as f: f.write(uploaded_video.read())
+        # 2. Save Font
+        font_path = None
+        if uploaded_font:
+            font_path = os.path.join(base_dir, "custom.ttf")
+            with open(font_path, "wb") as f: f.write(uploaded_font.read())
             
-            font_path = None
-            if uploaded_font:
-                font_path = os.path.join(temp_dir, "custom.ttf")
-                with open(font_path, "wb") as f: f.write(uploaded_font.read())
+        # 3. Process
+        try:
+            df = pd.read_csv(uploaded_csv)
+            files = process_batch(df, videos_dir, font_path, output_dir)
             
-            try:
-                # Run Generation
-                files = process_video_batch(pd.read_csv(uploaded_csv), tfile_vid, font_path, temp_dir)
-                
-                # Zip
-                zip_path = os.path.join(temp_dir, f"{APP_NAME}_Output.zip")
+            if not files:
+                st.error("No videos were generated. Check your CSV filenames match the ZIP files!")
+            else:
+                # 4. Zip Results
+                zip_path = os.path.join(base_dir, f"{APP_NAME}_Results.zip")
                 with zipfile.ZipFile(zip_path, 'w') as zipf:
                     for file in files:
                         zipf.write(file, os.path.basename(file))
                 
                 st.balloons()
-                st.success("RENDER COMPLETE.")
+                st.success(f"✅ BATCH COMPLETE: {len(files)} Videos Generated")
                 with open(zip_path, "rb") as f:
-                    st.download_button("⬇️ DOWNLOAD ZIP PACKAGE", f, f"{APP_NAME}_Assets.zip", "application/zip")
+                    st.download_button("⬇️ DOWNLOAD RESULTS", f, "Tour_Assets.zip", "application/zip")
                     
-            except Exception as e:
-                st.error(f"Render Error: {str(e)}")
+        except Exception as e:
+            st.error(f"System Error: {str(e)}")
+        finally:
+            # Cleanup temp files to keep server healthy
+            shutil.rmtree(base_dir)
