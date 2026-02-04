@@ -14,7 +14,6 @@ APP_NAME = "L&K Localizer"
 COMPANY_NAME = "LOCH & KEY PRODUCTIONS"
 PRIMARY_COLOR = "#4FBDDB"
 
-# SIDEBAR CONTROLS
 with st.sidebar:
     st.header("🎨 UI & MOTION TUNING")
     ui_mode = st.radio("UI Theme:", ["Dark Mode", "Light Mode"])
@@ -29,8 +28,8 @@ with st.sidebar:
     v_text_color = st.color_picker("Text Color", "#FFFFFF")
     v_stroke_color = st.color_picker("Outline Color", "#000000")
     v_stroke_width = st.slider("Outline Thickness", 1, 15, 4)
-    v_size_main = st.slider("Main Title Size", 40, 200, 130)
-    v_size_small = st.slider("Small Print Size", 20, 150, 110)
+    v_size_main = st.slider("Main Title Size", 40, 250, 150)
+    v_size_small = st.slider("Small Print Size", 20, 200, 120)
     
     st.markdown("---")
     if st.button("♻️ RESET EVERYTHING"):
@@ -43,21 +42,34 @@ def hex_to_rgb(h):
 TEXT_RGB = hex_to_rgb(v_text_color)
 STROKE_RGB = hex_to_rgb(v_stroke_color)
 
-# Theme Logic
+# Forced High-Contrast UI Colors
 BG_COLOR = "#0A1A1E" if ui_mode == "Dark Mode" else "#F0F2F6"
-TEXT_COLOR = "#FFFFFF" if ui_mode == "Dark Mode" else "#0A1A1E"
-UPLOADER_BORDER = "rgba(255, 255, 255, 0.3)" if ui_mode == "Dark Mode" else "rgba(0, 0, 0, 0.3)"
+UI_LABEL_COLOR = "#FFFFFF" if ui_mode == "Dark Mode" else "#000000"
 
 st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="centered")
 
-#---2. UI STYLING
+#---2. HIGH-CONTRAST UI STYLING
 st.markdown(f"""
 <style>
-    .stApp {{ background-color: {BG_COLOR}; color: {TEXT_COLOR}; }}
-    h1, h3 {{ color: {TEXT_COLOR}; text-align: center; text-transform: uppercase; }}
+    .stApp {{ background-color: {BG_COLOR}; color: {UI_LABEL_COLOR}; }}
+    
+    /* Force all labels (Upload Video Zip, Select City, etc) to be Pure White/Black and Bold */
+    label, .stMarkdown p, .stFileUploader label p {{ 
+        color: {UI_LABEL_COLOR} !important; 
+        font-weight: 800 !important; 
+        font-size: 1.1rem !important;
+        opacity: 1 !important;
+    }}
+    
+    /* Box Styling */
+    .stFileUploader section {{ 
+        border: 2px dashed {PRIMARY_COLOR} !important; 
+        background-color: rgba(255, 255, 255, 0.05) !important; 
+    }}
+    
+    h1, h3 {{ color: {UI_LABEL_COLOR}; text-align: center; text-transform: uppercase; }}
     h4 {{ color: {PRIMARY_COLOR} !important; border-bottom: 2px solid {PRIMARY_COLOR}; }}
-    .stFileUploader label p {{ color: {TEXT_COLOR} !important; font-weight: bold; }}
-    .stFileUploader section {{ border: 2px dashed {UPLOADER_BORDER} !important; background-color: rgba(128, 128, 128, 0.1) !important; }}
+    
     .stButton>button {{ border: 2px solid {PRIMARY_COLOR}; color: {PRIMARY_COLOR}; font-weight: bold; width: 100%; }}
 </style>
 """, unsafe_allow_html=True)
@@ -69,7 +81,7 @@ def get_col(df, possible_names):
             if col.strip().lower() == name.lower(): return col
     return None
 
-#---4. MOTION LOGIC ENGINE
+#---4. TYPOGRAPHY ENGINE
 def create_pil_text_clip(text, font_path, font_size, color=TEXT_RGB, stroke_width=v_stroke_width, stroke_color=STROKE_RGB):
     try:
         font = ImageFont.truetype(font_path, int(font_size)) if font_path else ImageFont.load_default()
@@ -79,16 +91,15 @@ def create_pil_text_clip(text, font_path, font_size, color=TEXT_RGB, stroke_widt
     dummy_img = Image.new('RGBA', (1, 1))
     draw = ImageDraw.Draw(dummy_img)
     
-    # Matching the reference video's compressed look
-    bbox = draw.textbbox((0, 0), text, font=font, align='center', stroke_width=stroke_width)
-    w, h = int((bbox[2]-bbox[0])+60), int((bbox[3]-bbox[1])+60)
+    # Tight leading (spacing) to match high-impact reference
+    bbox = draw.textbbox((0, 0), text, font=font, align='center', stroke_width=stroke_width, spacing=-10)
+    w, h = int((bbox[2]-bbox[0])+80), int((bbox[3]-bbox[1])+80)
     img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    pos = (int(30-bbox[0]), int(30-bbox[1]))
+    pos = (int(40-bbox[0]), int(40-bbox[1]))
     
-    # Tight line spacing for the stacked look
     draw.text(pos, text, font=font, fill=color, align='center', 
-              stroke_width=stroke_width, stroke_fill=stroke_color, spacing=-8)
+              stroke_width=stroke_width, stroke_fill=stroke_color, spacing=-10)
     return ImageClip(np.array(img))
 
 def apply_motion(clip, style, w, h, duration, start_time):
@@ -107,26 +118,32 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
     fname_col, city_col = col_map.get('filename'), col_map.get('city')
     filename = str(row.get(fname_col, '')).strip()
     video_full_path = os.path.join(videos_dir, filename)
-    if not filename or not os.path.exists(video_full_path): return False, "File not found"
+    
+    if not filename or not os.path.exists(video_full_path): 
+        return False, f"File '{filename}' not found"
 
     try:
+        # Robust duration check to prevent 'Attribute Error'
         clip = VideoFileClip(video_full_path)
+        if not hasattr(clip, 'duration') or clip.duration is None:
+            return False, "File format error: duration missing"
+            
         w, h = clip.size
         dur = clip.duration
         scale = 1.0 if (w / h) < 0.7 else 0.75
         
-        # Layer 1: Band Name (Visual Match)
+        # Layer 1: Band Name
         txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, int(v_size_main*scale))
         txt1 = txt1.set_position('center').set_start(0).set_duration(dur*0.25).crossfadeout(0.2)
         
-        # Layer 2: Info (Visual Match)
+        # Layer 2: Info
         city_name = str(row.get(city_col, 'Unknown')).upper()
         content2 = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
         txt2_base = create_pil_text_clip(content2, font_path, int(v_size_small*scale))
         txt2 = apply_motion(txt2_base, motion_profile, w, h, dur, dur*0.25)
         txt2 = txt2.set_start(dur*0.25).set_duration(dur*0.55)
         
-        # Layer 3: Tickets (Visual Match)
+        # Layer 3: Tickets
         txt3_base = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, int(v_size_small*scale))
         txt3 = apply_motion(txt3_base, motion_profile, w, h, dur, dur*0.80)
         txt3 = txt3.set_start(dur*0.80).set_duration(dur*0.20)
@@ -142,12 +159,10 @@ st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
 c1, c2 = st.columns(2)
 with c1:
-    st.markdown("#### 📁 ASSETS")
-    uploaded_zip = st.file_uploader("1. Upload Video ZIP", type=["zip"])
-    uploaded_font = st.file_uploader("2. Upload Font (.ttf)", type=["ttf"])
+    uploaded_zip = st.file_uploader("📁 UPLOAD VIDEO ZIP", type=["zip"])
+    uploaded_font = st.file_uploader("🔤 UPLOAD FONT (.TTF)", type=["ttf"])
 with c2:
-    st.markdown("#### 📄 SCHEDULE")
-    uploaded_csv = st.file_uploader("3. Upload Tour CSV", type=["csv"])
+    uploaded_csv = st.file_uploader("📄 UPLOAD TOUR CSV", type=["csv"])
 
 if uploaded_zip and uploaded_csv:
     df = pd.read_csv(uploaded_csv)
