@@ -17,7 +17,8 @@ PRIMARY_COLOR = "#4FBDDB"
 
 with st.sidebar:
     st.header("🎨 UI & MOTION TUNING")
-    ui_mode = st.radio("UI Theme:", ["Dark Mode", "Light Mode"])
+    # DEFAULT SET TO LIGHT MODE
+    ui_mode = st.radio("UI Theme:", ["Light Mode", "Dark Mode"], index=0)
     
     st.markdown("---")
     st.subheader("🎬 Motion Settings")
@@ -44,18 +45,39 @@ def hex_to_rgb(h):
 TEXT_RGB = hex_to_rgb(v_text_color)
 STROKE_RGB = hex_to_rgb(v_stroke_color)
 
-BG_COLOR = "#0A1A1E" if ui_mode == "Dark Mode" else "#F0F2F6"
-UI_LABEL_COLOR = "#FFFFFF" if ui_mode == "Dark Mode" else "#000000"
+# Swapped Default Logic
+if ui_mode == "Light Mode":
+    BG_COLOR = "#F0F2F6"
+    UI_LABEL_COLOR = "#000000"
+    BOX_BG = "rgba(0, 0, 0, 0.05)"
+else:
+    BG_COLOR = "#0A1A1E"
+    UI_LABEL_COLOR = "#FFFFFF"
+    BOX_BG = "rgba(255, 255, 255, 0.05)"
 
 st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="centered")
 
+#---2. IMPROVED CSS FOR THEME SWITCHING
 st.markdown(f"""
 <style>
-    .stApp {{ background-color: {BG_COLOR}; color: {UI_LABEL_COLOR}; }}
-    label, .stMarkdown p, .stFileUploader label p {{ color: {UI_LABEL_COLOR} !important; font-weight: 800 !important; }}
-    .stFileUploader section {{ border: 2px dashed {PRIMARY_COLOR} !important; background-color: rgba(255, 255, 255, 0.05) !important; }}
+    .stApp {{ background-color: {BG_COLOR}; color: {UI_LABEL_COLOR}; transition: all 0.3s ease; }}
+    
+    /* Force high-contrast labels for the current theme */
+    label, .stMarkdown p, .stFileUploader label p, div[data-testid="stWidgetLabel"] p {{ 
+        color: {UI_LABEL_COLOR} !important; 
+        font-weight: 800 !important; 
+        font-size: 1.1rem !important;
+    }}
+    
+    .stFileUploader section {{ 
+        border: 2px dashed {PRIMARY_COLOR} !important; 
+        background-color: {BOX_BG} !important; 
+        border-radius: 10px;
+    }}
+    
     h1, h3 {{ color: {UI_LABEL_COLOR} !important; text-align: center; text-transform: uppercase; }}
     h4 {{ color: {PRIMARY_COLOR} !important; border-bottom: 2px solid {PRIMARY_COLOR}; }}
+    
     .stButton>button {{ border: 2px solid {PRIMARY_COLOR}; color: {PRIMARY_COLOR}; font-weight: bold; width: 100%; }}
 </style>
 """, unsafe_allow_html=True)
@@ -66,10 +88,8 @@ def get_scaled_font(text, font_path, max_size, target_width):
     try:
         font = ImageFont.truetype(font_path, int(size)) if font_path else ImageFont.load_default()
     except:
-        font = ImageFont.load_default()
-        return font, size
+        return ImageFont.load_default(), size
 
-    # Simple loop to shrink font if it exceeds the safe width
     for s in range(int(max_size), 20, -5):
         test_font = ImageFont.truetype(font_path, s) if font_path else font
         dummy_img = Image.new('RGBA', (1, 1))
@@ -79,10 +99,9 @@ def get_scaled_font(text, font_path, max_size, target_width):
             return test_font, s
     return font, size
 
-#---4. TYPOGRAPHY ENGINE
+#---4. TYPOGRAPHY & RENDERING ENGINE
 def create_pil_text_clip(text, font_path, font_size, video_w, color=TEXT_RGB, stroke_width=v_stroke_width, stroke_color=STROKE_RGB):
-    # Auto-scale font based on video width
-    target_w = video_w * 0.85  # 15% margin
+    target_w = video_w * 0.85 
     font, final_size = get_scaled_font(text, font_path, font_size, target_w)
     
     dummy_img = Image.new('RGBA', (1, 1))
@@ -100,7 +119,6 @@ def create_pil_text_clip(text, font_path, font_size, video_w, color=TEXT_RGB, st
     return ImageClip(np.array(img))
 
 def apply_motion(clip, style, w, h, duration, start_time):
-    safe_dur = max(0.1, duration)
     if style == "Cinematic Lift":
         return clip.set_position(lambda t: ('center', (h/2 + 40) - (min(1, (t-start_time)/0.5) * 40))).crossfadein(0.2)
     elif style == "Zoom Pop":
@@ -120,20 +138,19 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
 
     try:
         with VideoFileClip(video_full_path) as clip:
+            # Metadata Handshake
             if not hasattr(clip, 'duration') or clip.duration is None or clip.duration == 0:
                 time.sleep(0.5)
                 clip = VideoFileClip(video_full_path)
+            
             w, h = clip.size
             dur = clip.duration
             
-            # Pass clip width for dynamic scaling
             txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, v_size_main, w).set_position('center').set_start(0).set_duration(dur*0.25).crossfadeout(0.2)
-            
             city_name = str(row.get(city_col, 'Unknown')).upper()
             content2 = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
-            txt2 = create_pil_text_clip(content2, font_path, v_size_small, w).set_position('center').set_start(dur*0.25).set_duration(dur*0.55)
-            
-            txt3 = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, v_size_small, w).set_position('center').set_start(dur*0.80).set_duration(dur*0.20)
+            txt2 = apply_motion(create_pil_text_clip(content2, font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.25).set_start(dur*0.25).set_duration(dur*0.55)
+            txt3 = apply_motion(create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.80).set_start(dur*0.80).set_duration(dur*0.20)
             
             CompositeVideoClip([clip, txt1, txt2, txt3]).write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
         return True, "Success"
@@ -152,8 +169,7 @@ with c2:
 
 if uploaded_zip and uploaded_csv:
     df = pd.read_csv(uploaded_csv)
-    col_map = {'filename': col_map_fn if (col_map_fn := get_col(df, ['Filename', 'File Name', 'Video'])) else None, 
-               'city': col_map_ct if (col_map_ct := get_col(df, ['City', 'Location'])) else None}
+    col_map = {'filename': get_col(df, ['Filename', 'File Name', 'Video']), 'city': get_col(df, ['City', 'Location'])}
     
     if not col_map['filename']:
         st.error("🚨 Check CSV headers!")
@@ -164,16 +180,16 @@ if uploaded_zip and uploaded_csv:
         
         btn_col1, btn_col2 = st.columns(2)
         with btn_col1:
-            if st.button("⚡ FAST TEXT PREVIEW (ALL LAYERS)"):
+            if st.button("⚡ FAST TEXT PREVIEW"):
                 row = df.iloc[preview_row]
                 city_name = str(row.get(col_map['city'], 'Unknown')).upper()
-                # Mock video width as 1080 for fast preview logic
-                t1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", None, v_size_main, 1080)
-                t2 = create_pil_text_clip(f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper(), None, v_size_small, 1080)
-                t3 = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), None, v_size_small, 1080)
-                st.image(t1.img, caption="1. INTRO LAYER")
-                st.image(t2.img, caption="2. MIDDLE LAYER")
-                st.image(t3.img, caption="3. OUTRO LAYER")
+                f_p = None
+                t1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", f_p, v_size_main, 1080)
+                t2 = create_pil_text_clip(f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper(), f_p, v_size_small, 1080)
+                t3 = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), f_p, v_size_small, 1080)
+                st.image(t1.img, caption="1. INTRO")
+                st.image(t2.img, caption="2. MIDDLE")
+                st.image(t3.img, caption="3. OUTRO")
         
         with btn_col2:
             if st.button("🎬 FULL VIDEO PREVIEW"):
@@ -186,11 +202,11 @@ if uploaded_zip and uploaded_csv:
                     f_p = os.path.join(base_dir, "f.ttf") if uploaded_font else None
                     if f_p: 
                         with open(f_p, "wb") as f: f.write(uploaded_font.read())
-                    with st.spinner("Rendering Video..."):
+                    with st.spinner("Rendering..."):
                         out = os.path.join(base_dir, "p.mp4")
                         success, msg = render_video(df.iloc[preview_row], v_dir, f_p, out, col_map)
                         if success: st.video(out)
-                        else: st.error(f"Render Error: {msg}")
+                        else: st.error(msg)
                 finally: shutil.rmtree(base_dir)
 
         st.subheader("🚀 BATCH PROCESSING")
