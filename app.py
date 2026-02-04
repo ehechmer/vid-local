@@ -15,11 +15,11 @@ PRIMARY_COLOR = "#4FBDDB"
 BACKGROUND_COLOR = "#0A1A1E"
 UI_TEXT_COLOR = "#DCE4EA"
 
-# VIDEO TEXT STYLING
-TEXT_HEX_COLOR = 'white'      
-STROKE_HEX_COLOR = 'black'    
-STROKE_WIDTH = 4              
-OVERLAY_OPACITY = 0.4         
+# VIDEO VISIBILITY SETTINGS
+TEXT_RGB = (255, 255, 255)    # Pure White
+STROKE_RGB = (0, 0, 0)        # Pure Black
+STROKE_WIDTH = 5              # Thick outline for legibility
+OVERLAY_OPACITY = 0.6         # 60% Dark tint for contrast
 
 st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="centered")
 
@@ -43,7 +43,7 @@ def get_col(df, possible_names):
     return None
 
 #---4. VIDEO ENGINE
-def create_pil_text_clip(text, font_path, font_size, color, stroke_width=STROKE_WIDTH, stroke_color=STROKE_HEX_COLOR):
+def create_pil_text_clip(text, font_path, font_size, color=TEXT_RGB, stroke_width=STROKE_WIDTH, stroke_color=STROKE_RGB):
     try:
         font = ImageFont.truetype(font_path, int(font_size)) if font_path else ImageFont.load_default()
     except:
@@ -52,10 +52,11 @@ def create_pil_text_clip(text, font_path, font_size, color, stroke_width=STROKE_
     dummy_img = Image.new('RGBA', (1, 1))
     draw = ImageDraw.Draw(dummy_img)
     bbox = draw.textbbox((0, 0), text, font=font, align='center', stroke_width=stroke_width)
-    w, h = int((bbox[2]-bbox[0])+60), int((bbox[3]-bbox[1])+60)
+    
+    w, h = int((bbox[2]-bbox[0])+80), int((bbox[3]-bbox[1])+80)
     img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.text((int(30-bbox[0]), int(30-bbox[1])), text, font=font, fill=color, align='center', 
+    draw.text((int(40-bbox[0]), int(40-bbox[1])), text, font=font, fill=color, align='center', 
               stroke_width=stroke_width, stroke_fill=stroke_color)
     return ImageClip(np.array(img))
 
@@ -73,17 +74,21 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
         w, h = clip.size
         dur = clip.duration
         scale = 1.0 if (w / h) < 0.7 else 0.75
+        
         overlay = ColorClip(size=(w, h), color=(0,0,0)).set_opacity(OVERLAY_OPACITY).set_duration(dur)
         
-        txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, int(80*scale), TEXT_HEX_COLOR)
+        # Layer 1: Band
+        txt1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", font_path, int(85*scale))
         txt1 = txt1.set_position('center').set_start(0).set_duration(dur*0.2).crossfadeout(0.3)
         
+        # Layer 2: Info (Slide Up)
         city_name = str(row.get(city_col, 'Unknown')).upper()
         content2 = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
-        txt2 = create_pil_text_clip(content2, font_path, int(70*scale), TEXT_HEX_COLOR)
+        txt2 = create_pil_text_clip(content2, font_path, int(75*scale))
         txt2 = txt2.set_position(lambda t: ('center', (h/2 + 50) - (min(1, t/0.5) * 50))).set_start(dur*0.2).set_duration(dur*0.65).crossfadein(0.3)
         
-        txt3 = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, int(70*scale), TEXT_HEX_COLOR)
+        # Layer 3: Tickets
+        txt3 = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, int(75*scale))
         txt3 = txt3.set_position('center').set_start(dur*0.85).set_duration(dur*0.15).crossfadein(0.2)
 
         final = CompositeVideoClip([clip, overlay, txt1, txt2, txt3])
@@ -125,7 +130,8 @@ if uploaded_zip and uploaded_csv:
 
         st.markdown("---")
         st.subheader("🔍 PREVIEW ENGINE")
-        preview_row = st.selectbox("Select row", df.index, format_func=lambda x: f"{df.iloc[x].get(col_map['city'], 'Unknown')} ({df.iloc[x].get(col_map['filename'])})")
+        preview_row = st.selectbox("Select row to test visibility", df.index, 
+                                   format_func=lambda x: f"{df.iloc[x].get(col_map['city'], 'Unknown')} ({df.iloc[x].get(col_map['filename'])})")
         
         if st.button("GENERATE PREVIEW"):
             base_dir = tempfile.mkdtemp()
@@ -170,7 +176,6 @@ if uploaded_zip and uploaded_csv:
                 for i, row in df.iterrows():
                     city = str(row.get(col_map['city'], 'Unknown'))
                     orig_fname = str(row.get(col_map['filename'], 'video'))
-                    # Added original filename to avoid overwriting files with the same city
                     out_name = f"Promo_{city.replace(' ', '_')}_{orig_fname}"
                     out_path = os.path.join(o_dir, out_name)
                     
@@ -183,6 +188,6 @@ if uploaded_zip and uploaded_csv:
                 if processed:
                     z_path = os.path.join(base_dir, "Results.zip")
                     with zipfile.ZipFile(z_path, 'w') as z:
-                        for f in processed: z.write(f, os.path.basename(f)) #
+                        for f in processed: z.write(f, os.path.basename(f))
                     st.download_button("Download All Videos", open(z_path, "rb"), "Tour_Assets.zip")
             finally: shutil.rmtree(base_dir)
