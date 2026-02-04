@@ -9,11 +9,13 @@ import random
 import time
 from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
 from PIL import Image, ImageFont, ImageDraw
-from PIL import Image
+
+# --- COMPATIBILITY PATCH FOR PILLOW 10+ ---
+# Fixes 'AttributeError: module PIL.Image has no attribute ANTIALIAS'
 if not hasattr(Image, 'ANTIALIAS'):
     Image.ANTIALIAS = Image.LANCZOS
 
-#---1. BRANDING & STYLE CONFIGURATION
+# --- 1. BRANDING & STYLE CONFIGURATION ---
 APP_NAME = "L&K Localizer"
 COMPANY_NAME = "LOCH & KEY PRODUCTIONS"
 PRIMARY_COLOR = "#4FBDDB"
@@ -40,13 +42,13 @@ with st.sidebar:
     if st.button("♻️ RESET EVERYTHING"):
         st.rerun()
 
-#---2. UTILITY FUNCTIONS
+# --- 2. UTILITY FUNCTIONS ---
 def hex_to_rgb(h):
     h = h.lstrip('#')
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 def get_col(df, options):
-    """Helper to find column names regardless of capitalization/spacing"""
+    """Detects existing columns from a list of potential names."""
     for opt in options:
         if opt in df.columns:
             return opt
@@ -55,7 +57,7 @@ def get_col(df, options):
 TEXT_RGB = hex_to_rgb(v_text_color)
 STROKE_RGB = hex_to_rgb(v_stroke_color)
 
-# Theme Logic
+# Swapped Default Logic
 if ui_mode == "Light Mode":
     BG_COLOR = "#F0F2F6"
     UI_LABEL_COLOR = "#000000"
@@ -67,7 +69,6 @@ else:
 
 st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="centered")
 
-# CSS Styling
 st.markdown(f"""
 <style>
     .stApp {{ background-color: {BG_COLOR}; color: {UI_LABEL_COLOR}; transition: all 0.3s ease; }}
@@ -87,7 +88,7 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-#---3. DYNAMIC FONT SCALER & RENDERING
+# --- 3. RENDERING ENGINE ---
 def get_scaled_font(text, font_path, max_size, target_width):
     size = max_size
     try:
@@ -142,6 +143,13 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
 
     try:
         with VideoFileClip(video_full_path) as clip:
+            # --- DURATION HANDSHAKE ---
+            if not clip.duration or clip.duration == 0:
+                clip.duration = clip.reader.duration
+            
+            if not clip.duration:
+                return False, "Failed to read duration."
+            
             w, h = clip.size
             dur = clip.duration
             
@@ -151,12 +159,11 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
             txt2 = apply_motion(create_pil_text_clip(content2, font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.25).set_start(dur*0.25).set_duration(dur*0.55)
             txt3 = apply_motion(create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), font_path, v_size_small, w), motion_profile, w, h, dur, dur*0.80).set_start(dur*0.80).set_duration(dur*0.20)
             
-            final_vid = CompositeVideoClip([clip, txt1, txt2, txt3])
-            final_vid.write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
+            CompositeVideoClip([clip, txt1, txt2, txt3]).write_videofile(output_path, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None, preset='ultrafast')
         return True, "Success"
     except Exception as e: return False, str(e)
 
-#---4. UI LAYOUT & PROCESSING
+# --- 4. UI LAYOUT ---
 st.title(APP_NAME)
 st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
@@ -169,14 +176,13 @@ with c2:
 
 if uploaded_zip and uploaded_csv:
     df = pd.read_csv(uploaded_csv)
-    # Using the now-defined get_col function
     col_map = {
-        'filename': get_col(df, ['Filename', 'File Name', 'Video']), 
-        'city': get_col(df, ['City', 'Location'])
+        'filename': get_col(df, ['Filename', 'File Name', 'Video', 'filename']), 
+        'city': get_col(df, ['City', 'Location', 'city'])
     }
     
     if not col_map['filename']:
-        st.error("🚨 Check CSV headers! Could not find a 'Filename' or 'Video' column.")
+        st.error("🚨 Could not find column for filenames. Expected: Filename, Video, or File Name.")
     else:
         st.markdown("---")
         st.subheader("🔍 PREVIEW ENGINE")
@@ -187,7 +193,7 @@ if uploaded_zip and uploaded_csv:
             if st.button("⚡ FAST TEXT PREVIEW"):
                 row = df.iloc[preview_row]
                 city_name = str(row.get(col_map['city'], 'Unknown')).upper()
-                f_p = None # Temporary font path logic
+                f_p = None
                 t1 = create_pil_text_clip("LAWRENCE\nWITH JACOB JEFFRIES", f_p, v_size_main, 1080)
                 t2 = create_pil_text_clip(f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper(), f_p, v_size_small, 1080)
                 t3 = create_pil_text_clip(f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper(), f_p, v_size_small, 1080)
@@ -225,7 +231,6 @@ if uploaded_zip and uploaded_csv:
                 f_p = os.path.join(base_dir, "f.ttf") if uploaded_font else None
                 if f_p: 
                     with open(f_p, "wb") as f: f.write(uploaded_font.read())
-                
                 processed, log_data, status_container = [], [], st.empty()
                 prog = st.progress(0)
                 for i, row in df.iterrows():
@@ -236,11 +241,9 @@ if uploaded_zip and uploaded_csv:
                     status_container.table(log_data)
                     if success: processed.append(out_path)
                     prog.progress((i + 1) / len(df))
-                
                 if processed:
                     z_path = os.path.join(base_dir, "Results.zip")
                     with zipfile.ZipFile(z_path, 'w') as z:
                         for f in processed: z.write(f, os.path.basename(f))
                     st.download_button("Download All Videos", open(z_path, "rb"), "Tour_Assets.zip")
             finally: shutil.rmtree(base_dir)
-
