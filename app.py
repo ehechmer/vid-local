@@ -40,8 +40,10 @@ if 'preview_img_cache' not in st.session_state:
     st.session_state.preview_img_cache = None
 if 'current_preview_file' not in st.session_state:
     st.session_state.current_preview_file = None
+if 'current_frame_time' not in st.session_state:
+    st.session_state.current_frame_time = 0.0
 
-st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="wide") # Switched to WIDE layout for better editor feel
+st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="wide")
 
 # --- 3. UI STYLING ---
 st.markdown(f"""
@@ -49,6 +51,12 @@ st.markdown(f"""
     .stApp {{ transition: all 0.3s ease; }}
     h1, h3 {{ text-align: center; text-transform: uppercase; }}
     .stButton>button {{ border: 2px solid {PRIMARY_COLOR}; color: {PRIMARY_COLOR}; font-weight: bold; width: 100%; }}
+    /* Compact preview adjustments */
+    div[data-testid="stImage"] img {{
+        max-width: 100%;
+        height: auto; 
+        border: 1px solid #333;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -56,12 +64,12 @@ st.markdown(f"""
 with st.sidebar:
     st.header("🎨 DESIGN STUDIO")
     
-    st.subheader("Layout & Motion")
+    st.subheader("1. Layout & Motion")
     motion_profile = st.selectbox("Animation Style:", 
                                   ["Static", "Cinematic Lift", "Zoom Pop", "Ghost Drift", "Shake", "Split Convergence"])
     
     st.markdown("---")
-    st.subheader("Typography")
+    st.subheader("2. Typography")
     v_text_color = st.color_picker("Text Color", "#FFFFFF")
     v_stroke_color = st.color_picker("Outline Color", "#000000")
     
@@ -72,6 +80,12 @@ with st.sidebar:
     with c2:
         v_size_small = st.slider("Body Size", 20, 300, 120)
         v_shadow_offset = st.slider("Shadow", 0, 20, 4)
+
+    st.markdown("---")
+    st.subheader("3. Positioning (Offsets)")
+    # New Positioning Controls
+    pos_x = st.slider("↔️ Horizontal Offset", -500, 500, 0, step=10, help="Negative = Left, Positive = Right")
+    pos_y = st.slider("↕️ Vertical Offset", -500, 500, 0, step=10, help="Negative = Up, Positive = Down")
 
 TEXT_RGB = hex_to_rgb(v_text_color)
 STROKE_RGB = hex_to_rgb(v_stroke_color)
@@ -86,7 +100,6 @@ def get_scaled_font(text, font_path, max_size, target_width):
     except:
         return ImageFont.load_default(), size
 
-    # Binary searchish optimization could go here, but linear is fast enough for PIL
     for s in range(int(max_size), 20, -5):
         test_font = ImageFont.truetype(font_path, s) if font_path else font
         dummy = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
@@ -95,9 +108,8 @@ def get_scaled_font(text, font_path, max_size, target_width):
             return test_font, s
     return font, size
 
-def draw_text_on_image(base_img, text, font_path, font_size, color, stroke, stroke_w, shadow_off):
-    """Composites text directly onto a PIL image"""
-    # Work on a copy
+def draw_text_on_image(base_img, text, font_path, font_size, color, stroke, stroke_w, shadow_off, offset_x=0, offset_y=0):
+    """Composites text directly onto a PIL image with manual positioning offsets"""
     img = base_img.copy().convert("RGBA")
     draw = ImageDraw.Draw(img)
     W, H = img.size
@@ -110,9 +122,9 @@ def draw_text_on_image(base_img, text, font_path, font_size, color, stroke, stro
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
     
-    # Center position
-    x = (W - text_w) / 2 - bbox[0]
-    y = (H - text_h) / 2 - bbox[1]
+    # Center position + User Offsets
+    x = ((W - text_w) / 2 - bbox[0]) + offset_x
+    y = ((H - text_h) / 2 - bbox[1]) + offset_y
     
     # Draw Shadow
     if shadow_off > 0:
@@ -122,8 +134,7 @@ def draw_text_on_image(base_img, text, font_path, font_size, color, stroke, stro
     draw.text((x, y), text, font=font, fill=color, align='center', stroke_width=stroke_w, stroke_fill=stroke, spacing=-12)
     return img
 
-def create_split_convergence(text, font_path, font_size, video_w, video_h, duration, start_time):
-    # (Same function as before, kept for the render step)
+def create_split_convergence(text, font_path, font_size, video_w, video_h, duration, start_time, offset_x=0, offset_y=0):
     lines = text.split('\n')
     clips = []
     target_w = video_w * 0.85 
@@ -137,7 +148,9 @@ def create_split_convergence(text, font_path, font_size, video_w, video_h, durat
         line_heights.append((bbox[3] - bbox[1]) + 20)
     
     total_h = sum(line_heights)
-    start_y_cursor = (video_h / 2) - (total_h / 2)
+    
+    # Apply Y Offset here
+    start_y_cursor = ((video_h / 2) - (total_h / 2)) + offset_y
     
     for i, line in enumerate(lines):
         dummy_img = Image.new('RGBA', (1, 1))
@@ -152,9 +165,12 @@ def create_split_convergence(text, font_path, font_size, video_w, video_h, durat
         draw.text(pos, line, font=font, fill=TEXT_RGB, align='center', stroke_width=v_stroke_width, stroke_fill=STROKE_RGB)
         
         line_clip = ImageClip(np.array(img)).set_duration(duration).set_start(start_time)
+        
         final_y = start_y_cursor
         start_y_cursor += line_heights[i]
-        final_x = (video_w / 2) - (w / 2)
+        
+        # Apply X Offset to final destination
+        final_x = ((video_w / 2) - (w / 2)) + offset_x
         start_x = -w if i % 2 == 0 else video_w
         
         def pos_func(t, sx=start_x, fx=final_x, fy=final_y, st=start_time):
@@ -168,9 +184,8 @@ def create_split_convergence(text, font_path, font_size, video_w, video_h, durat
         clips.append(line_clip.set_position(pos_func))
     return CompositeVideoClip(clips, size=(video_w, video_h)).set_duration(duration).set_start(start_time)
 
-# --- 6. RENDER FUNCTION (For final export) ---
+# --- 6. RENDER FUNCTION ---
 def render_video(row, videos_dir, font_path, output_path, col_map):
-    # (Simplified for brevity - assumes checks passed)
     filename = str(row.get(col_map['filename'])).strip()
     video_full_path = os.path.join(videos_dir, filename)
     
@@ -184,28 +199,29 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
         t2_dur, t3_start = dur * 0.55, dur * 0.80
         t3_dur = dur * 0.20
 
+        # Note: We apply the sidebar pos_x/pos_y to ALL texts for consistency, 
+        # or you could map specific offsets if you wanted distinct ones.
+        
         # Intro
-        txt1 = ImageClip(np.array(draw_text_on_image(Image.new("RGBA", (w,h)), "LAWRENCE\nWITH JACOB JEFFRIES", font_path, v_size_main, TEXT_RGB, STROKE_RGB, v_stroke_width, v_shadow_offset)))
-        txt1 = txt1.set_duration(t1_dur).set_position('center').crossfadeout(0.2)
+        txt1_img = draw_text_on_image(Image.new("RGBA", (w,h)), "LAWRENCE\nWITH JACOB JEFFRIES", font_path, v_size_main, TEXT_RGB, STROKE_RGB, v_stroke_width, v_shadow_offset, pos_x, pos_y)
+        txt1 = ImageClip(np.array(txt1_img)).set_duration(t1_dur).set_position('center').crossfadeout(0.2)
         
         # Middle
         city = str(row.get(col_map['city'], 'Unknown')).upper()
         content2 = f"{row.get('Date','')}\n{city}\n{row.get('Venue','')}".upper()
         if motion_profile == "Split Convergence":
-            txt2 = create_split_convergence(content2, font_path, v_size_small, w, h, t2_dur, t2_start)
+            txt2 = create_split_convergence(content2, font_path, v_size_small, w, h, t2_dur, t2_start, pos_x, pos_y)
         else:
             base_img = Image.new("RGBA", (w,h))
-            overlay = draw_text_on_image(base_img, content2, font_path, v_size_small, TEXT_RGB, STROKE_RGB, v_stroke_width, v_shadow_offset)
-            txt2 = ImageClip(np.array(overlay)).set_duration(t2_dur)
-            # Re-implement other motions if needed, or simple pos set
-            txt2 = txt2.set_position('center').set_start(t2_start).crossfadein(0.2)
+            overlay = draw_text_on_image(base_img, content2, font_path, v_size_small, TEXT_RGB, STROKE_RGB, v_stroke_width, v_shadow_offset, pos_x, pos_y)
+            txt2 = ImageClip(np.array(overlay)).set_duration(t2_dur).set_position('center').set_start(t2_start).crossfadein(0.2)
 
         # Outro
         content3 = f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper()
         if motion_profile == "Split Convergence":
-            txt3 = create_split_convergence(content3, font_path, v_size_small, w, h, t3_dur, t3_start)
+            txt3 = create_split_convergence(content3, font_path, v_size_small, w, h, t3_dur, t3_start, pos_x, pos_y)
         else:
-            overlay3 = draw_text_on_image(Image.new("RGBA", (w,h)), content3, font_path, v_size_small, TEXT_RGB, STROKE_RGB, v_stroke_width, v_shadow_offset)
+            overlay3 = draw_text_on_image(Image.new("RGBA", (w,h)), content3, font_path, v_size_small, TEXT_RGB, STROKE_RGB, v_stroke_width, v_shadow_offset, pos_x, pos_y)
             txt3 = ImageClip(np.array(overlay3)).set_duration(t3_dur).set_position('center').set_start(t3_start)
 
         final = CompositeVideoClip([clip, txt1, txt2, txt3])
@@ -220,7 +236,7 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
 st.title(APP_NAME)
 st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
-col_files, col_preview = st.columns([1, 2])
+col_files, col_preview = st.columns([2, 3]) # Ratio: Files take 2/5, Preview takes 3/5
 
 with col_files:
     uploaded_zip = st.file_uploader("1. Video Zip", type=["zip"])
@@ -237,11 +253,11 @@ if uploaded_zip and uploaded_csv:
     if not col_map['filename']:
         st.error("🚨 CSV Error: Missing 'Filename' or 'City' column.")
     else:
-        # --- PREVIEW LOGIC ---
+        # --- PREVIEW SETUP ---
         with col_files:
             st.markdown("---")
-            st.subheader("📍 Select City")
-            preview_idx = st.selectbox("Choose row to preview:", df.index, format_func=lambda x: f"{df.iloc[x].get(col_map['city'], 'Unknown')}")
+            st.subheader("📍 Select Data")
+            preview_idx = st.selectbox("Choose row:", df.index, format_func=lambda x: f"{df.iloc[x].get(col_map['city'], 'Unknown')}")
             
             row = df.iloc[preview_idx]
             city_name = str(row.get(col_map['city'], 'Unknown')).upper()
@@ -256,7 +272,6 @@ if uploaded_zip and uploaded_csv:
             if not os.path.exists(video_path):
                 with zipfile.ZipFile(uploaded_zip, 'r') as z:
                     try:
-                        # Find file in zip (handle subfolders)
                         for name in z.namelist():
                             if os.path.basename(name) == video_file:
                                 source = z.open(name)
@@ -276,44 +291,62 @@ if uploaded_zip and uploaded_csv:
         with col_preview:
             st.subheader("👁️ LIVE EDITOR")
             
-            # 1. Cache the background frame
-            if st.session_state.current_preview_file != video_file and os.path.exists(video_path):
-                with st.spinner("Loading video frame..."):
+            # Preview Layer Control
+            preview_layer = st.radio("Preview Text Layer:", ["Intro (Lawrence)", "Middle (City/Venue)", "Outro (Tickets)"], horizontal=True, index=1)
+            
+            # Scrub Control
+            scrub_time = st.slider("Scrub Video Frame (Sec)", 0.0, 5.0, 0.5, step=0.1)
+
+            # 1. Cache/Refresh the background frame based on Slider
+            frame_cache_key = f"{video_file}_{scrub_time}"
+            if st.session_state.get('last_frame_key') != frame_cache_key and os.path.exists(video_path):
+                with st.spinner(f"Loading frame at {scrub_time}s..."):
                     try:
                         clip = VideoFileClip(video_path)
-                        # Save frame 0 as PIL Image
-                        st.session_state.preview_img_cache = Image.fromarray(clip.get_frame(0))
-                        st.session_state.current_preview_file = video_file
+                        # Safety check for short videos
+                        actual_t = min(scrub_time, clip.duration - 0.1) if clip.duration else scrub_time
+                        st.session_state.preview_img_cache = Image.fromarray(clip.get_frame(actual_t))
+                        st.session_state.last_frame_key = frame_cache_key
                         clip.close()
                     except:
                         st.error("Failed to load video frame.")
 
             # 2. Real-time composite
             if st.session_state.preview_img_cache:
-                # Text Content to Preview
-                preview_text = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
+                # Determine Text Content & Size based on selection
+                if "Intro" in preview_layer:
+                    p_text = "LAWRENCE\nWITH JACOB JEFFRIES"
+                    p_size = v_size_main
+                elif "Middle" in preview_layer:
+                    p_text = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
+                    p_size = v_size_small
+                else: # Outro
+                    p_text = f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper()
+                    p_size = v_size_small
                 
-                # Draw
+                # Draw with OFFSETS
                 final_preview = draw_text_on_image(
                     st.session_state.preview_img_cache, 
-                    preview_text, 
+                    p_text, 
                     font_path, 
-                    v_size_small, # Using small size as this is usually the complex part
+                    p_size, 
                     TEXT_RGB, 
                     STROKE_RGB, 
                     v_stroke_width, 
-                    v_shadow_offset
+                    v_shadow_offset,
+                    pos_x,
+                    pos_y
                 )
                 
-                st.image(final_preview, caption="Real-time Preview (Frame 0)", use_container_width=True)
+                # Scale down for display (50% width)
+                st.image(final_preview, caption=f"Previewing: {preview_layer}", width=450) # Fixed width prevents giant image
             else:
-                st.info("Upload files to see preview.")
+                st.info("Upload files to start.")
 
         # --- BATCH RENDER SECTION ---
         st.markdown("---")
         st.subheader("🚀 BATCH PROCESSING")
         if st.button("RENDER ALL VIDEOS"):
-            # (Standard Render Logic reused here)
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -323,7 +356,6 @@ if uploaded_zip and uploaded_csv:
             results = []
             files_to_zip = []
             
-            # Extract everything first to be safe
             with zipfile.ZipFile(uploaded_zip, 'r') as z:
                 z.extractall(st.session_state.temp_dir)
 
@@ -335,8 +367,6 @@ if uploaded_zip and uploaded_csv:
                 out_path = os.path.join(output_dir, out_name)
                 
                 status_text.text(f"Rendering {i+1}/{total}: {c_name}...")
-                
-                # Call Render
                 success, msg = render_video(r, st.session_state.temp_dir, font_path, out_path, col_map)
                 
                 if success: files_to_zip.append(out_path)
