@@ -61,9 +61,16 @@ st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="wide")
 st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700&family=Source+Sans+3:wght@400;600&display=swap');
+    :root {
+        color-scheme: light;
+        --text-color: #1f2937;
+        --secondary-text-color: #4b5563;
+        --background-color: #f7fafc;
+    }
     .stApp {{
         transition: all 0.3s ease;
         background: radial-gradient(1200px 600px at 10% 0%, #f2f7fb 0%, #ffffff 50%, #eef4f8 100%);
+        color: var(--text-color);
     }}
     h1, h3 {{
         text-align: center;
@@ -71,8 +78,9 @@ st.markdown(f"""
         font-family: 'Montserrat', sans-serif;
         letter-spacing: 0.08em;
     }}
-    .stMarkdown, .stText, .stTextInput, .stSelectbox, .stDataFrame {{
+    .stMarkdown, .stText, .stTextInput, .stSelectbox, .stDataFrame, label, p {{
         font-family: 'Source Sans 3', sans-serif;
+        color: var(--text-color);
     }}
     .stButton>button {{
         border: 2px solid {PRIMARY_COLOR};
