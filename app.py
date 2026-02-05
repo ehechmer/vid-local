@@ -350,11 +350,48 @@ with col_files:
     uploaded_csv = st.file_uploader("2. Tour CSV", type=["csv"])
     uploaded_font = st.file_uploader("3. Font (.ttf)", type=["ttf"])
 
+video_options = []
+if uploaded_zip:
+    with zipfile.ZipFile(uploaded_zip, 'r') as z:
+        zip_names = [os.path.basename(n) for n in z.namelist()]
+    video_options = [n for n in zip_names if n.lower().endswith(('.mp4', '.mov', '.m4v'))]
+    video_options = sorted(list(dict.fromkeys(video_options)))
+
+    if 'default_map' not in st.session_state:
+        st.session_state.default_map = {"1x1": "", "9x16": ""}
+
+    st.markdown("---")
+    st.subheader("🎞️ Map Video Files")
+    if not video_options:
+        st.error("No video files found in the zip.")
+    else:
+        if uploaded_csv:
+            st.caption("Map per-row files after the CSV loads.")
+        else:
+            st.caption("Set default files now; you can fine-tune per row after uploading the CSV.")
+        if st.button("Clear Default Mapping"):
+            st.session_state.default_map = {"1x1": "", "9x16": ""}
+        st.session_state.default_map["1x1"] = st.selectbox(
+            "Default 1x1 file",
+            [""] + video_options,
+            index=([""] + video_options).index(st.session_state.default_map.get("1x1", "")) if st.session_state.default_map.get("1x1", "") in ([""] + video_options) else 0,
+            key="default_1x1"
+        )
+        st.session_state.default_map["9x16"] = st.selectbox(
+            "Default 9x16 file",
+            [""] + video_options,
+            index=([""] + video_options).index(st.session_state.default_map.get("9x16", "")) if st.session_state.default_map.get("9x16", "") in ([""] + video_options) else 0,
+            key="default_9x16"
+        )
+
 if uploaded_zip and uploaded_csv:
     df = pd.read_csv(uploaded_csv)
     col_map = {
         'filename': get_col(df, ['Filename', 'File Name', 'Video', 'filename']),
-        'city': get_col(df, ['City', 'Location', 'city'])
+        'city': get_col(df, ['City', 'Location', 'city']),
+        'date': get_col(df, ['Date', 'Show Date', 'date']),
+        'venue': get_col(df, ['Venue', 'Location Name', 'venue']),
+        'ticket': get_col(df, ['Ticket_Link', 'Ticket Link', 'ticket'])
     }
     
     if not col_map['city']:
@@ -362,14 +399,11 @@ if uploaded_zip and uploaded_csv:
     else:
         if not col_map['filename']:
             st.warning("CSV missing a filename column. You can still map files using the dropdowns below.")
-        # Build file list from zip for manual mapping
-        with zipfile.ZipFile(uploaded_zip, 'r') as z:
-            zip_names = [os.path.basename(n) for n in z.namelist()]
-        video_options = [n for n in zip_names if n.lower().endswith(('.mp4', '.mov', '.m4v'))]
-        video_options = sorted(list(dict.fromkeys(video_options)))
-
         if 'file_map' not in st.session_state:
             st.session_state.file_map = {}
+        for i in df.index:
+            if i not in st.session_state.file_map:
+                st.session_state.file_map[i] = dict(st.session_state.get("default_map", {"1x1": "", "9x16": ""}))
 
         # --- PREVIEW SETUP ---
         with col_files:
@@ -451,13 +485,15 @@ if uploaded_zip and uploaded_csv:
                     p_text = "LAWRENCE\nWITH JACOB JEFFRIES"
                     p_size = v_size_main
                 elif "Middle" in preview_layer:
-                    venue_text = row.get('Venue','')
+                    date_text = row.get(col_map.get('date', 'Date'), '')
+                    venue_text = row.get(col_map.get('venue', 'Venue'), '')
                     if venue_choice != "Use CSV":
                         venue_text = venue_choice
-                    p_text = f"{row.get('Date','')}\n{city_name}\n{venue_text}".upper()
+                    p_text = f"{date_text}\n{city_name}\n{venue_text}".upper()
                     p_size = v_size_small
                 else: # Outro
-                    p_text = f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper()
+                    ticket_text = row.get(col_map.get('ticket', 'Ticket_Link'), '')
+                    p_text = f"TICKETS ON SALE NOW\n{ticket_text}".upper()
                     p_size = v_size_small
                 
                 final_preview = draw_text_on_image(
@@ -496,7 +532,7 @@ if uploaded_zip and uploaded_csv:
             total = len(df)
             for i, r in df.iterrows():
                 c_name = str(r.get(col_map['city'])).replace(" ", "_")
-                mapping = st.session_state.file_map.get(i, {})
+                mapping = st.session_state.file_map.get(i, {}) or st.session_state.get("default_map", {})
                 mapped_1x1 = mapping.get("1x1", "")
                 mapped_9x16 = mapping.get("9x16", "")
 
