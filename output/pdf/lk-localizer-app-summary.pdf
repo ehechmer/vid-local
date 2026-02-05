@@ -1,0 +1,193 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 2920 >>
+stream
+BT
+/F1 18 Tf
+0.080 0.240 0.350 rg
+48.00 744.00 Td
+(L&K Localizer - Live Editor) Tj
+ET
+BT
+/F1 12 Tf
+0.050 0.050 0.050 rg
+48.00 722.00 Td
+(App Summary) Tj
+ET
+BT
+/F1 13 Tf
+0.120 0.350 0.550 rg
+48.00 696.00 Td
+(What It Is) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+48.00 679.00 Td
+(A Streamlit-based video localization editor that overlays tour-specific text onto promo) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+48.00 664.00 Td
+(videos and renders final assets in batch.) Tj
+ET
+BT
+/F1 13 Tf
+0.120 0.350 0.550 rg
+48.00 639.00 Td
+(Who It's For) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+48.00 622.00 Td
+(Video producers or localization editors at Loch & Key Productions preparing city-specific) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+48.00 607.00 Td
+(tour promo videos.) Tj
+ET
+BT
+/F1 13 Tf
+0.120 0.350 0.550 rg
+48.00 582.00 Td
+(What It Does) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 565.00 Td
+(- Upload a ZIP of source videos, a tour CSV, and an optional TTF font.) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 550.00 Td
+(- Live preview with frame scrubbing and layer selection \(intro, middle, outro\).) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 535.00 Td
+(- Design controls for motion style, text color, stroke, shadow, and offsets.) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 520.00 Td
+(- Auto-scale text to fit the video frame width.) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 505.00 Td
+(- Render text overlays and composite them onto videos.) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 490.00 Td
+(- Batch render all rows and download a final ZIP of outputs.) Tj
+ET
+BT
+/F1 13 Tf
+0.120 0.350 0.550 rg
+48.00 465.00 Td
+(How It Works) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 448.00 Td
+(- UI: Streamlit page with sidebar controls, preview panel, and batch render actions.) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 433.00 Td
+(- Data flow: CSV parsed with pandas; video ZIP extracted to a temp directory; selected frame) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 418.00 Td
+(  cached for preview.) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 403.00 Td
+(- Rendering: PIL draws text to RGBA images; MoviePy composes ImageClips over VideoFileClip;) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 388.00 Td
+(  ffprobe/ffmpeg handle duration and output; results zipped for download.) Tj
+ET
+BT
+/F1 13 Tf
+0.120 0.350 0.550 rg
+48.00 363.00 Td
+(How To Run) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 346.00 Td
+(- Install Python deps: `pip install -r requirements.txt`.) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 331.00 Td
+(- Install system deps: `ffmpeg` and `imagemagick` \(from `packages.txt`\).) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 316.00 Td
+(- Start the app: `streamlit run app.py`.) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 301.00 Td
+(- Python version: Not found in repo.) Tj
+ET
+BT
+/F1 11 Tf
+0.050 0.050 0.050 rg
+60.00 286.00 Td
+(- Environment variables: Not found in repo.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000003213 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+3283
+%%EOF
