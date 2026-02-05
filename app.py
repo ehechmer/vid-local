@@ -340,281 +340,142 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
 st.title(APP_NAME)
 st.markdown(f"<h3>{COMPANY_NAME}</h3>", unsafe_allow_html=True)
 
-if 'presets' not in st.session_state:
-    st.session_state.presets = {}
-if 'temp_dir' not in st.session_state:
-    st.session_state.temp_dir = tempfile.mkdtemp()
+col_files, col_preview = st.columns([1, 1])
 
-tabs = st.tabs(["Input", "Preview", "Batch"])
+with col_files:
+    uploaded_zip = st.file_uploader("1. Video Zip", type=["zip"])
+    uploaded_csv = st.file_uploader("2. Tour CSV", type=["csv"])
+    uploaded_font = st.file_uploader("3. Font (.ttf)", type=["ttf"])
 
-with tabs[0]:
-    st.markdown('<div class="block-card">', unsafe_allow_html=True)
-    col_files = st.columns([1, 1, 1])
-    with col_files[0]:
-        uploaded_zip = st.file_uploader("Video Zip", type=["zip"])
-    with col_files[1]:
-        uploaded_csv = st.file_uploader("Tour CSV (optional)", type=["csv"])
-    with col_files[2]:
-        uploaded_font = st.file_uploader("Font (.ttf)", type=["ttf"])
-
-    template_df = pd.DataFrame([{
-        "Filename": "sample.mp4",
-        "City": "Knoxville",
-        "Date": "Feb 20",
-        "Venue": "The Mill",
-        "Ticket_Link": "example.com/tickets"
-    }])
-    template_buf = io.StringIO()
-    template_df.to_csv(template_buf, index=False)
-    st.download_button("Download CSV Template", template_buf.getvalue(), "tour_template.csv")
-
-    st.markdown("---")
-    input_mode = st.radio("Data Source", ["CSV Upload", "Manual Entry"], horizontal=True)
-
-    df = None
+if uploaded_zip and uploaded_csv:
+    df = pd.read_csv(uploaded_csv)
     col_map = {
-        "filename": "Filename",
-        "city": "City",
-        "date": "Date",
-        "venue": "Venue",
-        "ticket": "Ticket_Link"
+        'filename': get_col(df, ['Filename', 'File Name', 'Video', 'filename']),
+        'city': get_col(df, ['City', 'Location', 'city'])
     }
-
-    if input_mode == "CSV Upload":
-        if uploaded_csv:
-            df = pd.read_csv(uploaded_csv)
-            st.subheader("Column Mapping")
-            c1, c2, c3, c4, c5 = st.columns(5)
-            with c1:
-                col_map["filename"] = st.selectbox("Filename", df.columns, index=df.columns.get_loc(get_col(df, ['Filename', 'File Name', 'Video', 'filename'])) if get_col(df, ['Filename', 'File Name', 'Video', 'filename']) in df.columns else 0)
-            with c2:
-                col_map["city"] = st.selectbox("City", df.columns, index=df.columns.get_loc(get_col(df, ['City', 'Location', 'city'])) if get_col(df, ['City', 'Location', 'city']) in df.columns else 0)
-            with c3:
-                col_map["date"] = st.selectbox("Date", df.columns, index=df.columns.get_loc(get_col(df, ['Date', 'Show Date', 'date'])) if get_col(df, ['Date', 'Show Date', 'date']) in df.columns else 0)
-            with c4:
-                col_map["venue"] = st.selectbox("Venue", df.columns, index=df.columns.get_loc(get_col(df, ['Venue', 'Location Name', 'venue'])) if get_col(df, ['Venue', 'Location Name', 'venue']) in df.columns else 0)
-            with c5:
-                col_map["ticket"] = st.selectbox("Ticket Link", df.columns, index=df.columns.get_loc(get_col(df, ['Ticket_Link', 'Ticket Link', 'ticket'])) if get_col(df, ['Ticket_Link', 'Ticket Link', 'ticket']) in df.columns else 0)
-        else:
-            st.info("Upload a CSV or switch to Manual Entry.")
+    
+    if not col_map['filename']:
+        st.error("🚨 CSV Error: Missing 'Filename' or 'City' column.")
     else:
-        manual_mode = st.radio("Manual Mode", ["Single Row", "Table"], horizontal=True)
-        if manual_mode == "Single Row":
-            with st.form("single_row_form"):
-                f1 = st.text_input("Filename (must match zip)", "")
-                f2 = st.text_input("City", "")
-                f3 = st.text_input("Date", "")
-                f4 = st.text_input("Venue", "")
-                f5 = st.text_input("Ticket Link", "")
-                submitted = st.form_submit_button("Add Row")
-            if submitted:
-                df = pd.DataFrame([{"Filename": f1, "City": f2, "Date": f3, "Venue": f4, "Ticket_Link": f5}])
-                st.success("Row added.")
-        else:
-            base = pd.DataFrame(columns=["Filename", "City", "Date", "Venue", "Ticket_Link"])
-            df = st.data_editor(base, num_rows="dynamic", use_container_width=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with tabs[1]:
-    st.markdown('<div class="block-card">', unsafe_allow_html=True)
-    st.subheader("Live Editor")
-    if not uploaded_zip:
-        st.info("Upload a video zip to enable preview.")
-    elif df is None or df.empty:
-        st.info("Add data rows to enable preview.")
-    else:
-        preview_idx = st.selectbox("Choose row", df.index, format_func=lambda x: f"{df.iloc[x].get(col_map['city'], 'Unknown')}")
-        row = df.iloc[preview_idx]
-        city_name = str(row.get(col_map['city'], 'Unknown')).upper()
-        video_file = str(row.get(col_map['filename'])).strip()
-
-        video_path = os.path.join(st.session_state.temp_dir, video_file)
-        if not os.path.exists(video_path):
-            with zipfile.ZipFile(uploaded_zip, 'r') as z:
-                try:
-                    for name in z.namelist():
-                        if os.path.basename(name) == video_file:
-                            source = z.open(name)
-                            target = open(video_path, "wb")
-                            with source, target:
-                                shutil.copyfileobj(source, target)
-                            break
-                except:
-                    st.error(f"Could not find {video_file} in zip.")
-
-        font_path = os.path.join(st.session_state.temp_dir, "custom_font.ttf")
-        if uploaded_font:
-            with open(font_path, "wb") as f:
-                f.write(uploaded_font.getvalue())
-        else:
-            font_path = None
-
-        preview_layer = st.radio("Layer", ["Intro", "Middle", "Outro"], horizontal=True, index=1)
-        scrub_time = st.slider("Scrub Video Frame (Sec)", 0.0, 5.0, 0.5, step=0.1)
-
-        frame_cache_key = f"{video_file}_{scrub_time}"
-        if st.session_state.get('last_frame_key') != frame_cache_key and os.path.exists(video_path):
-            with st.spinner("Loading frame..."):
-                try:
-                    clip = VideoFileClip(video_path)
-                    actual_t = min(scrub_time, clip.duration - 0.1) if clip.duration else scrub_time
-                    st.session_state.preview_img_cache = Image.fromarray(clip.get_frame(actual_t))
-                    st.session_state.last_frame_key = frame_cache_key
-                    clip.close()
-                except:
-                    st.error("Failed to load video frame.")
-
-        if st.session_state.preview_img_cache:
-            if preview_layer == "Intro":
-                p_text = "LAWRENCE\nWITH JACOB JEFFRIES"
-                p_size = v_size_main
-            elif preview_layer == "Middle":
-                p_text = f"{row.get(col_map.get('date','Date'),'')}\n{city_name}\n{row.get(col_map.get('venue','Venue'),'')}".upper()
-                p_size = v_size_small
-            else:
-                p_text = f"TICKETS ON SALE NOW\n{row.get(col_map.get('ticket','Ticket_Link'),'')}".upper()
-                p_size = v_size_small
-
-            final_preview = draw_text_on_image(
-                st.session_state.preview_img_cache,
-                p_text,
-                font_path,
-                p_size,
-                TEXT_RGB,
-                STROKE_RGB,
-                v_stroke_width,
-                v_shadow_offset,
-                pos_x,
-                pos_y
-            )
-            st.image(final_preview, caption=f"Previewing: {preview_layer}", width=300)
-        else:
-            st.info("Waiting for preview frame.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with tabs[2]:
-    st.markdown('<div class="block-card">', unsafe_allow_html=True)
-    st.subheader("Batch Processing")
-
-    preset_col, save_col = st.columns([2, 1])
-    with preset_col:
-        preset_name = st.selectbox("Presets", ["(none)"] + list(st.session_state.presets.keys()))
-        if preset_name != "(none)":
-            preset = st.session_state.presets[preset_name]
-            motion_profile = preset["motion_profile"]
-            v_text_color = preset["v_text_color"]
-            v_stroke_color = preset["v_stroke_color"]
-            v_size_main = preset["v_size_main"]
-            v_size_small = preset["v_size_small"]
-            v_stroke_width = preset["v_stroke_width"]
-            v_shadow_offset = preset["v_shadow_offset"]
-            pos_x = preset["pos_x"]
-            pos_y = preset["pos_y"]
-            update_color_globals()
-    with save_col:
-        new_preset_name = st.text_input("Save Preset As", "")
-        if st.button("Save Preset"):
-            if new_preset_name:
-                st.session_state.presets[new_preset_name] = {
-                    "motion_profile": motion_profile,
-                    "v_text_color": v_text_color,
-                    "v_stroke_color": v_stroke_color,
-                    "v_size_main": v_size_main,
-                    "v_size_small": v_size_small,
-                    "v_stroke_width": v_stroke_width,
-                    "v_shadow_offset": v_shadow_offset,
-                    "pos_x": pos_x,
-                    "pos_y": pos_y
-                }
-                st.success("Preset saved.")
-            else:
-                st.warning("Enter a preset name.")
-
-    st.markdown("---")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        out_prefix = st.text_input("Filename Prefix", "Promo")
-    with c2:
-        out_suffix = st.text_input("Filename Suffix", "")
-    with c3:
-        out_sep = st.text_input("Separator", "_")
-
-    c4, c5 = st.columns(2)
-    with c4:
-        use_slugify = st.checkbox("Slugify City", value=True)
-        use_filename_stem = st.checkbox("Include Video Filename Stem", value=True)
-    with c5:
-        skip_existing = st.checkbox("Skip Existing Outputs", value=True)
-
-    if not uploaded_zip:
-        st.info("Upload a video zip to render.")
-    elif df is None or df.empty:
-        st.info("Add data rows to render.")
-    else:
-        errors = validate_rows(df, col_map)
-        if errors:
-            st.error("Validation errors:\n" + "\n".join(errors))
-        else:
-            if st.button("Render All Videos"):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-
-                output_dir = os.path.join(st.session_state.temp_dir, "output")
-                os.makedirs(output_dir, exist_ok=True)
-
-                results = []
-                files_to_zip = []
-
+        # --- PREVIEW SETUP ---
+        with col_files:
+            st.markdown("---")
+            st.subheader("📍 Select Data")
+            preview_idx = st.selectbox("Choose row:", df.index, format_func=lambda x: f"{df.iloc[x].get(col_map['city'], 'Unknown')}")
+            
+            row = df.iloc[preview_idx]
+            city_name = str(row.get(col_map['city'], 'Unknown')).upper()
+            video_file = str(row.get(col_map['filename'])).strip()
+            
+            # Temporary Dir Management
+            if 'temp_dir' not in st.session_state:
+                st.session_state.temp_dir = tempfile.mkdtemp()
+            
+            # Extract video if needed
+            video_path = os.path.join(st.session_state.temp_dir, video_file)
+            if not os.path.exists(video_path):
                 with zipfile.ZipFile(uploaded_zip, 'r') as z:
-                    z.extractall(st.session_state.temp_dir)
+                    try:
+                        for name in z.namelist():
+                            if os.path.basename(name) == video_file:
+                                source = z.open(name)
+                                target = open(video_path, "wb")
+                                with source, target:
+                                    shutil.copyfileobj(source, target)
+                                break
+                    except:
+                        st.error(f"Could not find {video_file} in zip.")
+            
+            # Update Font
+            font_path = os.path.join(st.session_state.temp_dir, "custom_font.ttf")
+            if uploaded_font:
+                with open(font_path, "wb") as f: f.write(uploaded_font.getvalue())
+            else: font_path = None
 
-                font_path = os.path.join(st.session_state.temp_dir, "custom_font.ttf")
-                if uploaded_font:
-                    with open(font_path, "wb") as f:
-                        f.write(uploaded_font.getvalue())
-                else:
-                    font_path = None
+        with col_preview:
+            st.subheader("👁️ LIVE EDITOR")
+            
+            preview_layer = st.radio("Layer:", ["Intro (Lawrence)", "Middle (City/Venue)", "Outro (Tickets)"], horizontal=True, index=1)
+            scrub_time = st.slider("Scrub Video Frame (Sec)", 0.0, 5.0, 0.5, step=0.1)
 
-                total = len(df)
-                for i, r in df.iterrows():
-                    out_name = build_output_name(
-                        r,
-                        col_map,
-                        out_prefix,
-                        out_suffix,
-                        out_sep,
-                        use_slugify,
-                        use_filename_stem
-                    )
-                    out_path = os.path.join(output_dir, out_name)
+            # 1. Cache/Refresh the background frame
+            frame_cache_key = f"{video_file}_{scrub_time}"
+            if st.session_state.get('last_frame_key') != frame_cache_key and os.path.exists(video_path):
+                with st.spinner(f"Loading frame..."):
+                    try:
+                        clip = VideoFileClip(video_path)
+                        actual_t = min(scrub_time, clip.duration - 0.1) if clip.duration else scrub_time
+                        st.session_state.preview_img_cache = Image.fromarray(clip.get_frame(actual_t))
+                        st.session_state.last_frame_key = frame_cache_key
+                        clip.close()
+                    except:
+                        st.error("Failed to load video frame.")
 
-                    if skip_existing and os.path.exists(out_path):
-                        results.append(f"{out_name}: ⏭ skipped")
-                        progress_bar.progress((i + 1) / total)
-                        continue
+            # 2. Real-time composite
+            if st.session_state.preview_img_cache:
+                if "Intro" in preview_layer:
+                    p_text = "LAWRENCE\nWITH JACOB JEFFRIES"
+                    p_size = v_size_main
+                elif "Middle" in preview_layer:
+                    p_text = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
+                    p_size = v_size_small
+                else: # Outro
+                    p_text = f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper()
+                    p_size = v_size_small
+                
+                final_preview = draw_text_on_image(
+                    st.session_state.preview_img_cache, 
+                    p_text, 
+                    font_path, 
+                    p_size, 
+                    TEXT_RGB, 
+                    STROKE_RGB, 
+                    v_stroke_width, 
+                    v_shadow_offset,
+                    pos_x,
+                    pos_y
+                )
+                
+                st.image(final_preview, caption=f"Previewing: {preview_layer}", width=300)
+            else:
+                st.info("Upload files to start.")
 
-                    status_text.text(f"Rendering {i+1}/{total}: {out_name}...")
-                    success, msg = render_video(r, st.session_state.temp_dir, font_path, out_path, col_map)
+        # --- BATCH RENDER SECTION ---
+        st.markdown("---")
+        st.subheader("🚀 BATCH PROCESSING")
+        if st.button("RENDER ALL VIDEOS"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            output_dir = os.path.join(st.session_state.temp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            
+            results = []
+            files_to_zip = []
+            
+            with zipfile.ZipFile(uploaded_zip, 'r') as z:
+                z.extractall(st.session_state.temp_dir)
 
-                    if success:
-                        files_to_zip.append(out_path)
-                        results.append(f"{out_name}: ✅")
-                    else:
-                        results.append(f"{out_name}: ❌ {msg}")
-
-                    progress_bar.progress((i + 1) / total)
-
-                st.success("Batch Complete!")
-                st.expander("View Logs").write(results)
-                log_text = "\n".join(results)
-                st.download_button("Download Log", log_text, "render_log.txt")
-
-                if files_to_zip:
-                    zip_out = os.path.join(st.session_state.temp_dir, "Final_Assets.zip")
-                    with zipfile.ZipFile(zip_out, 'w') as z:
-                        for f in files_to_zip:
-                            z.write(f, os.path.basename(f))
-                    with open(zip_out, "rb") as f:
-                        st.download_button("Download ZIP", f, "Tour_Assets.zip")
-    st.markdown("</div>", unsafe_allow_html=True)
+            total = len(df)
+            for i, r in df.iterrows():
+                c_name = str(r.get(col_map['city'])).replace(" ", "_")
+                fname = str(r.get(col_map['filename']))
+                out_name = f"Promo_{c_name}_{fname}"
+                out_path = os.path.join(output_dir, out_name)
+                
+                status_text.text(f"Rendering {i+1}/{total}: {c_name}...")
+                success, msg = render_video(r, st.session_state.temp_dir, font_path, out_path, col_map)
+                
+                if success: files_to_zip.append(out_path)
+                results.append(f"{c_name}: {'✅' if success else '❌ ' + msg}")
+                progress_bar.progress((i + 1) / total)
+            
+            st.success("Batch Complete!")
+            st.expander("View Logs").write(results)
+            
+            if files_to_zip:
+                zip_out = os.path.join(st.session_state.temp_dir, "Final_Assets.zip")
+                with zipfile.ZipFile(zip_out, 'w') as z:
+                    for f in files_to_zip: z.write(f, os.path.basename(f))
+                with open(zip_out, "rb") as f:
+                    st.download_button("DOWNLOAD ZIP", f, "Tour_Assets.zip")
