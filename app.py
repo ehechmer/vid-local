@@ -287,8 +287,11 @@ def create_split_convergence(text, font_path, font_size, video_w, video_h, durat
     return CompositeVideoClip(clips, size=(video_w, video_h)).set_duration(duration).set_start(start_time)
 
 # --- 6. RENDER FUNCTION (FIXED) ---
-def render_video(row, videos_dir, font_path, output_path, col_map):
-    filename = str(row.get(col_map['filename'])).strip()
+def render_video(row, videos_dir, font_path, output_path, col_map, filename_override=None, venue_override=None):
+    filename_source = filename_override or (row.get(col_map.get('filename')) if col_map.get('filename') else None)
+    if not filename_source:
+        return False, "Missing filename"
+    filename = str(filename_source).strip()
     video_full_path = find_video_path(videos_dir, filename)
     
     clip = None # <--- FIX: Initialize clip before try block
@@ -310,7 +313,7 @@ def render_video(row, videos_dir, font_path, output_path, col_map):
         # Middle
         city = str(row.get(col_map['city'], 'Unknown')).upper()
         date_val = row.get(col_map.get('date', 'Date'), '')
-        venue_val = row.get(col_map.get('venue', 'Venue'), '')
+        venue_val = venue_override if venue_override is not None else row.get(col_map.get('venue', 'Venue'), '')
         ticket_val = row.get(col_map.get('ticket', 'Ticket_Link'), '')
         content2 = f"{date_val}\n{city}\n{venue_val}".upper()
         if motion_profile == "Split Convergence":
@@ -354,18 +357,49 @@ if uploaded_zip and uploaded_csv:
         'city': get_col(df, ['City', 'Location', 'city'])
     }
     
-    if not col_map['filename']:
-        st.error("🚨 CSV Error: Missing 'Filename' or 'City' column.")
+    if not col_map['city']:
+        st.error("🚨 CSV Error: Missing 'City' column.")
     else:
+        if not col_map['filename']:
+            st.warning("CSV missing a filename column. You can still map files using the dropdowns below.")
+        # Build file list from zip for manual mapping
+        with zipfile.ZipFile(uploaded_zip, 'r') as z:
+            zip_names = [os.path.basename(n) for n in z.namelist()]
+        video_options = [n for n in zip_names if n.lower().endswith(('.mp4', '.mov', '.m4v'))]
+        video_options = sorted(list(dict.fromkeys(video_options)))
+
+        if 'file_map' not in st.session_state:
+            st.session_state.file_map = {}
+
         # --- PREVIEW SETUP ---
         with col_files:
             st.markdown("---")
             st.subheader("📍 Select Data")
+            venue_choice = st.selectbox("Venue (override)", ["Use CSV", "The Mill & Mine", "Bijou Theatre"])
             preview_idx = st.selectbox("Choose row:", df.index, format_func=lambda x: f"{df.iloc[x].get(col_map['city'], 'Unknown')}")
             
             row = df.iloc[preview_idx]
             city_name = str(row.get(col_map['city'], 'Unknown')).upper()
-            video_file = str(row.get(col_map['filename'])).strip()
+            # File mapping UI
+            st.markdown("**🎞️ Map Video Files (per row)**")
+            if not video_options:
+                st.error("No video files found in the zip.")
+            else:
+                map_idx = st.selectbox("Map row", df.index, key="map_row", format_func=lambda x: f"{df.iloc[x].get(col_map['city'], 'Unknown')}")
+                current_map = st.session_state.file_map.get(map_idx, {})
+                map_1x1 = st.selectbox("1x1 file", [""] + video_options, index=([""] + video_options).index(current_map.get("1x1", "")) if current_map.get("1x1", "") in ([""] + video_options) else 0, key=f"map_1x1_{map_idx}")
+                map_9x16 = st.selectbox("9x16 file", [""] + video_options, index=([""] + video_options).index(current_map.get("9x16", "")) if current_map.get("9x16", "") in ([""] + video_options) else 0, key=f"map_9x16_{map_idx}")
+                st.session_state.file_map[map_idx] = {"1x1": map_1x1, "9x16": map_9x16}
+                if st.button("Apply This Mapping To All Rows"):
+                    for i in df.index:
+                        st.session_state.file_map[i] = {"1x1": map_1x1, "9x16": map_9x16}
+                    st.success("Applied to all rows.")
+
+            preview_format = st.radio("Preview Format", ["1x1", "9x16"], horizontal=True)
+            mapped = st.session_state.file_map.get(preview_idx, {})
+            video_file = mapped.get(preview_format, "")
+            if not video_file:
+                video_file = str(row.get(col_map['filename'])).strip()
             
             # Temporary Dir Management
             if 'temp_dir' not in st.session_state:
@@ -417,7 +451,10 @@ if uploaded_zip and uploaded_csv:
                     p_text = "LAWRENCE\nWITH JACOB JEFFRIES"
                     p_size = v_size_main
                 elif "Middle" in preview_layer:
-                    p_text = f"{row.get('Date','')}\n{city_name}\n{row.get('Venue','')}".upper()
+                    venue_text = row.get('Venue','')
+                    if venue_choice != "Use CSV":
+                        venue_text = venue_choice
+                    p_text = f"{row.get('Date','')}\n{city_name}\n{venue_text}".upper()
                     p_size = v_size_small
                 else: # Outro
                     p_text = f"TICKETS ON SALE NOW\n{row.get('Ticket_Link','')}".upper()
@@ -459,15 +496,36 @@ if uploaded_zip and uploaded_csv:
             total = len(df)
             for i, r in df.iterrows():
                 c_name = str(r.get(col_map['city'])).replace(" ", "_")
-                fname = str(r.get(col_map['filename']))
-                out_name = f"Promo_{c_name}_{fname}"
-                out_path = os.path.join(output_dir, out_name)
-                
-                status_text.text(f"Rendering {i+1}/{total}: {c_name}...")
-                success, msg = render_video(r, st.session_state.temp_dir, font_path, out_path, col_map)
-                
-                if success: files_to_zip.append(out_path)
-                results.append(f"{c_name}: {'✅' if success else '❌ ' + msg}")
+                mapping = st.session_state.file_map.get(i, {})
+                mapped_1x1 = mapping.get("1x1", "")
+                mapped_9x16 = mapping.get("9x16", "")
+
+                if not mapped_1x1 and not mapped_9x16:
+                    results.append(f"{c_name}: ❌ missing 1x1/9x16 mapping")
+                    progress_bar.progress((i + 1) / total)
+                    continue
+
+                for label, fname in [("1x1", mapped_1x1), ("9x16", mapped_9x16)]:
+                    if not fname:
+                        results.append(f"{c_name} {label}: ❌ missing mapping")
+                        continue
+                    out_name = f"Promo_{c_name}_{fname}"
+                    out_path = os.path.join(output_dir, out_name)
+                    
+                    status_text.text(f"Rendering {i+1}/{total}: {c_name} ({label})...")
+                    venue_override = None if venue_choice == "Use CSV" else venue_choice
+                    success, msg = render_video(
+                        r,
+                        st.session_state.temp_dir,
+                        font_path,
+                        out_path,
+                        col_map,
+                        filename_override=fname,
+                        venue_override=venue_override
+                    )
+                    
+                    if success: files_to_zip.append(out_path)
+                    results.append(f"{c_name} {label}: {'✅' if success else '❌ ' + msg}")
                 progress_bar.progress((i + 1) / total)
             
             st.success("Batch Complete!")
